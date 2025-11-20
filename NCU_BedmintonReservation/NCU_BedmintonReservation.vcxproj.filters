@@ -18,6 +18,9 @@
     <ClCompile Include="Source.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="basic.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="basic.h">
@@ -39,5 +42,6 @@
     <Text Include="ReservationInfo.txt">
       <Filter>资源文件</Filter>
     </Text>
+    <Text Include="ReservationLog.txt" />
   </ItemGroup>
 </Project>

@@ -1,5 +1,5 @@
 #define CPPHTTPLIB_OPENSSL_SUPPORT
-#define _CRT_SECURE_NO_WARNINGS
+
 #include "httplib.h"
 #include "json.h"
 #include <chrono>
@@ -14,20 +14,13 @@
 #include <time.h>
 
 const std::string Name = "NCU Court Reservation";
-const std::string Version = "v20251117-113400";
-
-struct ReservationInfo {
-	std::string date;
-	int hallID;
-	int rTime;
-	time_t enableTimestamp;
-};
+const std::string Version = "v20251120-151300";
 
 const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/login";
 
 static std::string GenerateToken(std::string username, std::string password) {
 
-	std::string NCU_user_token;
+	std::string NCU_user_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3NjM2MzU2NDUsInVzZXJOYW1lIjoi5p6X56uvIiwidXNlciI6IjU3MTYxMjUwNjEiLCJ0eXBlQ29kZSI6IlMwMiJ9.YP8K-sSyNjoJnifJ5NaslCCWig3BpTDtZfgHTcxfY_c";
 
 	if (NCU_user_token.empty()) {
 
@@ -151,21 +144,29 @@ void AsyncReservation(ReservationInfo rInfo, std::string token) {
 		result = client.Get("/api/badminton/saveReservationInformation" + ssURI.str(), headers);
 	} while (!result);
 
-	std::cout << "Request Body." << std::endl;
-	std::cout << result->body << std::endl;
-
 	Json::Value ReservationResponse;
+
+	std::ofstream osLog("ReservationLog.txt", std::ios::app);
+	if (!osLog.is_open()) std::cerr << "Failed to Open Log File." << std::endl;
+	osLog << "[" << curretntTime.GetFormattedTime() << "] "
+		<< "Court: " << std::setw(2) << std::setfill('0') << rInfo.hallID
+		<< ", Date: " << rInfo.date
+		<< ", Time: " << std::setw(2) << std::setfill('0') << rInfo.rTime << ":00-"
+		<< std::setw(2) << std::setfill('0') << rInfo.rTime + 1 << ":00"
+		<< ": " << result->body << std::endl;
 
 	if (Json::Reader().parse(result->body, ReservationResponse)) {
 		std::cout << "Court: " << std::setw(2) << std::setfill('0') << rInfo.hallID
 			<< ", Date: " << rInfo.date
 			<< ", Time: " << std::setw(2) << std::setfill('0') << rInfo.rTime << ":00-"
 			<< std::setw(2) << std::setfill('0') << rInfo.rTime + 1 << ":00"
-			<< ": " << std::endl;
+			<< ": ";
 		if (ReservationResponse["code"].asString() == "200") ColorfulPrint("Success\n", FOREGROUND_GREEN);
+		else if (ReservationResponse["code"].asString() == "600") ColorfulPrint("Processing\n", FOREGROUND_RED);
 		else if (ReservationResponse["code"].asString() == "601") ColorfulPrint("Reserved\n", FOREGROUND_RED);
+		else ColorfulPrint("Unknown Reason\n", FOREGROUND_RED);
 	}
-	else ColorfulPrint("Reservation Failed: Unknown Reason\n", FOREGROUND_RED);
+	else ColorfulPrint("Json Parse Failed.\n", FOREGROUND_RED);
 }
 
 int main() {
@@ -183,7 +184,7 @@ int main() {
 	std::string date;
 	int hallID, rTime;
 
-	//XXXX-XX-XX N T
+	//File Read Style: XXXX-XX-XX HallID rTime
 	std::ifstream isReservationInfo("ReservationInfo.txt", std::ios::in);
 	if (isReservationInfo.is_open()) while (isReservationInfo >> date >> hallID >> rTime) Reservation.push_back({ date, hallID, rTime, StringToTimeStamp(date)});
 	else {
@@ -263,49 +264,46 @@ int main() {
 	
 	std::cout << "Pausing...\r";
 
-	//while (currentTime.GetHour() != 11 && currentTime.GetMinute() != 45);
+	while (currentTime.GetHour() != 11 && currentTime.GetMinute() != 45);
 	std::cout << "Generating Token..." << std::endl;
 	NCU_user_token = GenerateToken(username, password);
 
-	//while (currentTime.GetHour() != 12);
+	while (currentTime.GetHour() != 12);
 	std::cout << "Reservation..." << std::endl;
 
 	std::vector<std::thread> ReservationThreads;
 
 	for (auto& it : Reservation) {
 		bool doContinue = false;
-
+		
 		std::cout << "Court: " << std::setw(2) << std::setfill('0') << it.hallID
 			<< ", Date: " << it.date
 			<< ", Time: " << std::setw(2) << std::setfill('0') << it.rTime << ":00-"
 			<< std::setw(2) << std::setfill('0') << it.rTime + 1 << ":00"
-			<< ", Reservation Status: " << std::endl;
-
+			<< ", Reservation Status: ";
+		
 		if (!isIn(it.date, vector_abledDate)) {
-			ColorfulPrint("Reservation Error: Overtime\n", FOREGROUND_RED);
+			ColorfulPrint("Overtime\n", FOREGROUND_RED);
 			doContinue = true;
 		}
-
+		
 		if (it.hallID < 1 || it.hallID > 12) {
-			ColorfulPrint("HallID Error: Overcount\n", FOREGROUND_RED);
+			ColorfulPrint("Overcount\n", FOREGROUND_RED);
 			doContinue = true;
 		}
-
+		
 		for (auto& it2 : areaMapping[it.date]) {
 			if (it2["areaNickname"] == "hall" + std::to_string(it.hallID) && it2[std::string("time" + std::to_string(it.rTime))] != 1) {
-				ColorfulPrint("Court Error: Reserved\n", FOREGROUND_RED);
+				ColorfulPrint("Reserved\n", FOREGROUND_RED);
 				doContinue = true;
 			}
 		}
-
-		if (doContinue) {
-			std::cout << std::endl;
-			continue;
-		}
+		
+		if (doContinue) continue;
 
 		ReservationThreads.push_back(std::thread(AsyncReservation, it, NCU_user_token));
 
-		ColorfulPrint("Reservation Information Verification Passed.", FOREGROUND_GREEN);
+		ColorfulPrint("Reservation Information Verification Passed.\n", FOREGROUND_GREEN);
 	}
 
 	if (!ReservationThreads.empty()) for (auto& it : ReservationThreads) it.join();
