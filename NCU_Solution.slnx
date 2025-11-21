@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="NCU_BedmintonReservation/NCU_BedmintonReservation.vcxproj" />
+  <Project Path="NCU_BedmintonReservation/NCU_BedmintonReservation.vcxproj" Id="08adcc8e-74e3-477b-a6ea-6b2990b5045e" />
 </Solution>
