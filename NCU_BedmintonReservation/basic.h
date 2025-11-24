@@ -2,8 +2,9 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
-#include <Windows.h>
 #include <sstream>
+#include <vector>
+#include <Windows.h>
 
 struct ReservationInfo {
 	std::string date;
@@ -33,9 +34,42 @@ private:
 public:
 	time_t GetTimeStamp();
 	std::string GetFormattedTime();
+	std::string GetFormattedTimeDate();
 	std::string GetFormattedTimeAfter(int days);
 	int GetHour();
 	int GetMinute();
+};
+
+std::vector<std::string> StringSplit(std::string str, char delimiter);
+
+class DateCalculator {
+private:
+	int year;
+	int month;
+	int day;
+public:
+	DateCalculator(std::string date);
+	DateCalculator();
+	bool setDate(std::string date);
+	bool isValidDate() const;
+	bool addDays(int days);
+	bool addMonths(int months);
+	bool addYears(int years);
+	std::string Print() const;
+	bool operator<(const DateCalculator& other) const;
+	bool operator<(const std::string& date) const;
+	bool operator>(const DateCalculator& other) const;
+	bool operator>(const std::string& date) const;
+	bool operator<=(const DateCalculator& other) const;
+	bool operator>=(const DateCalculator& other) const;
+	bool operator==(const DateCalculator& other) const;
+	bool operator=(const std::string& date);
+	bool operator-=(int days);
+	DateCalculator operator-(int days) const;
+	bool operator+=(int days);
+	DateCalculator operator+(int days) const;
+private:
+	bool isLeapYear(int y) const;
 };
 
 time_t StringToTimeStamp(std::string str);

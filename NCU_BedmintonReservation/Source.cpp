@@ -14,7 +14,7 @@
 #include <time.h>
 
 const std::string Name = "NCU Court Reservation";
-const std::string Version = "v20251121-213900";
+const std::string Version = "v20251125-003200";
 
 const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/login";
 
@@ -154,18 +154,95 @@ void AsyncReservation(ReservationInfo rInfo, std::string token) {
 		<< std::setw(2) << std::setfill('0') << rInfo.rTime + 1 << ":00"
 		<< ": " << result->body << std::endl;
 
-	if (Json::Reader().parse(result->body, ReservationResponse)) {
-		std::cout << "Court: " << std::setw(2) << std::setfill('0') << rInfo.hallID
+	for (int times = 0; times < 5; times += 1) {
+		if (!Json::Reader().parse(result->body, ReservationResponse)) {
+			ColorfulPrint("Json Parse Failed.\n", FOREGROUND_RED);
+			continue;
+		}
+
+		std::cout << "Try " << times + 1 << " - " << "Court: " << std::setw(2) << std::setfill('0') << rInfo.hallID
 			<< ", Date: " << rInfo.date
 			<< ", Time: " << std::setw(2) << std::setfill('0') << rInfo.rTime << ":00-"
 			<< std::setw(2) << std::setfill('0') << rInfo.rTime + 1 << ":00"
 			<< ": ";
-		if (ReservationResponse["code"].asString() == "200") ColorfulPrint("Success\n", FOREGROUND_GREEN);
+		if (ReservationResponse["code"].asString() == "200") {
+			ColorfulPrint("Success\n", FOREGROUND_GREEN);
+			break;
+		}
 		else if (ReservationResponse["code"].asString() == "600") ColorfulPrint("Processing\n", FOREGROUND_RED);
 		else if (ReservationResponse["code"].asString() == "601") ColorfulPrint("Reserved\n", FOREGROUND_RED);
 		else ColorfulPrint("Unknown Reason\n", FOREGROUND_RED);
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	}
-	else ColorfulPrint("Json Parse Failed.\n", FOREGROUND_RED);
+}
+
+std::map<std::string, Json::Value> GenerateMap(std::string token) {
+	std::vector<std::string> vector_abledDate;
+
+	if (CurrentTime().GetHour() >= 12) {
+		vector_abledDate.push_back(CurrentTime().GetFormattedTimeDate());
+		DateCalculator tempDate = CurrentTime().GetFormattedTimeDate();
+		tempDate += 1;
+		vector_abledDate.push_back(tempDate.Print());
+		tempDate += 1;
+		vector_abledDate.push_back(tempDate.Print());
+	}
+	else {
+		vector_abledDate.push_back(CurrentTime().GetFormattedTimeDate());
+		DateCalculator tempDate = CurrentTime().GetFormattedTimeDate();
+		tempDate += 1;
+		vector_abledDate.push_back(tempDate.Print());
+	}
+
+	std::map<std::string, Json::Value> result;
+
+	for (auto& it : vector_abledDate) {
+		static httplib::SSLClient client_ndyy_ssl("ndyy.ncu.edu.cn");
+		httplib::Result result_NCU_VenueInfo;
+		httplib::Headers header_VenueInfo;
+		header_VenueInfo.emplace("token", token);
+		std::stringstream sstream_sestr;
+		sstream_sestr << "?campus=%E5%89%8D%E6%B9%96%E5%8C%97%E9%99%A2&venues=%E5%85%A8%E9%83%A8%E5%9C%BA%E9%A6%86&types=%E7%BE%BD%E6%AF%9B%E7%90%83&date=" << it;
+		do {
+			result_NCU_VenueInfo = client_ndyy_ssl.Get("/api/badminton/areaReservationInformation" + sstream_sestr.str(), header_VenueInfo);
+		} while (!result_NCU_VenueInfo);
+		result.emplace(it, ReadJsonFromString(result_NCU_VenueInfo->body));
+	}
+
+	return result;
+}
+
+static void autoReservation(std::string& token, std::vector<ReservationInfo>& Reservation, std::map<std::string, Json::Value>& areaMapping) {
+	std::vector<std::thread> ReservationThreads;
+	for (auto& it : Reservation) {
+		bool doContinue = false;
+
+		std::cout << "Court: " << std::setw(2) << std::setfill('0') << it.hallID
+			<< ", Date: " << it.date
+			<< ", Time: " << std::setw(2) << std::setfill('0') << it.rTime << ":00-"
+			<< std::setw(2) << std::setfill('0') << it.rTime + 1 << ":00"
+			<< ", Reservation Status: ";
+
+		if (it.hallID < 1 || it.hallID > 12) {
+			ColorfulPrint("Overcount\n", FOREGROUND_RED);
+			doContinue = true;
+		}
+		for (auto& it2 : areaMapping[it.date]["data"]) {
+			if (it2["areaNickname"] == "hall" + std::to_string(it.hallID) && it2[std::string("time" + std::to_string(it.rTime))] != 1) {
+				ColorfulPrint("Reserved\n", FOREGROUND_RED);
+				doContinue = true;
+			}
+		}
+
+		if (doContinue) continue;
+
+		ReservationThreads.push_back(std::thread(AsyncReservation, it, token));
+
+		ColorfulPrint("Reservation Information Verification Passed.\n", FOREGROUND_GREEN);
+	}
+
+	if (!ReservationThreads.empty()) for (auto& it : ReservationThreads) it.join();
+
 }
 
 int main() {
@@ -187,130 +264,112 @@ int main() {
 	int hallID, rTime;
 
 	//File Read Style: XXXX-XX-XX HallID rTime
+	/*
+	* Check the validation of date.
+	* When over 12:00, can only reserve for today, tomorrow, and the day after tomorrow.
+	* and before 12:00, can only reserve for today and tomorrow.
+	* so I need to check the date and create a vector to store when to reserve.
+	* and if the date is overdue, skip it and report error.
+	*/
+
+	std::map<DateCalculator, std::vector<ReservationInfo>> map_abledDate;
+	std::vector<ReservationInfo> reserveNow;
+	std::vector<DateCalculator> reserveDateList;
+
+	DateCalculator dateRead, reserveDate;
+	//std::cout << std::endl << "Reserve Date Reference: " << reserveDate.Print() << std::endl;
 	std::ifstream isReservationInfo("ReservationInfo.txt", std::ios::in);
-	if (isReservationInfo.is_open()) while (isReservationInfo >> date >> hallID >> rTime) Reservation.push_back({ date, hallID, rTime, StringToTimeStamp(date)});
+	if (isReservationInfo.is_open()) {
+		while (isReservationInfo >> date >> hallID >> rTime) {
+			dateRead = date;
+			reserveDate = CurrentTime().GetFormattedTimeDate();
+			if (!dateRead.isValidDate()) {
+				std::cerr << "Invalid Date: " << date << std::endl << std::endl;
+				continue;
+			}
+			if (dateRead < CurrentTime().GetFormattedTimeDate()) {
+				std::cerr << "Overdue Date: " << date << std::endl << std::endl;
+				continue;
+			}
+
+			if (CurrentTime().GetHour() >= 12) reserveDate += 2;
+			else reserveDate += 1;
+
+			if (dateRead <= reserveDate) {
+				reserveNow.push_back({ date, hallID, rTime, StringToTimeStamp(date) });
+				continue;
+			}
+
+			map_abledDate[dateRead - 2].push_back({ date, hallID, rTime, StringToTimeStamp(date) });
+			if(!isIn(dateRead - 2, reserveDateList)) reserveDateList.push_back(dateRead - 2);
+		}
+	}
 	else {
 		std::cerr << "Failed to Load Reservation Info." << std::endl;
 		return 0;
 	}
 
-	CurrentTime currentTime;
+	std::cout << "=========== Reservation Info ============" << std::endl;
+	std::cout << "Immediate Reservation Date:" << std::endl;
+	for (auto& it : reserveNow) {
+		std::cout << "  - Court: " << std::setw(2) << std::setfill('0') << it.hallID
+			<< ", Time: " << std::setw(2) << std::setfill('0') << it.rTime << ":00-"
+			<< std::setw(2) << std::setfill('0') << it.rTime + 1 << ":00"
+			<< std::endl;
+	}
 
-	httplib::SSLClient client_ndyy_ssl("ndyy.ncu.edu.cn");
-	httplib::Result result_NCU_VenueInfo;
+	for (auto& it : map_abledDate) {
+		std::cout << "Scheduled Reservation Date: " << it.first.Print() << std::endl;
+		for (auto& it2 : it.second) {
+			std::cout << "  - Court: " << std::setw(2) << std::setfill('0') << it2.hallID
+				<< ", Time: " << std::setw(2) << std::setfill('0') << it2.rTime << ":00-"
+				<< std::setw(2) << std::setfill('0') << it2.rTime + 1 << ":00"
+				<< std::endl;
+		}
+	}
+	std::cout << "========================================" << std::endl << std::endl;
 
 	std::string NCU_user_token;
 
 	std::cout << "GenerateToken" << std::endl;
 	NCU_user_token = GenerateToken(username, password);
-	std::cout << "GeneratedToken" << std::endl;
-
 	std::cout << "Token: " << NCU_user_token << std::endl;
 
-	std::vector<std::string> vector_abledDate;
-	std::vector<Json::Value> vector_VenueJsonInfo;
+	std::cout << "Current Time: " << CurrentTime().GetFormattedTime() << std::endl;
+	std::map<std::string, Json::Value> areaMapping = GenerateMap(NCU_user_token);
 
-	std::cout << "Current Time: " << currentTime.GetFormattedTime() << std::endl;
-
-	if (currentTime.GetHour() >= 12) {
-		std::cout << "Venue Reservation End Time: " << currentTime.GetFormattedTimeAfter(2) << std::endl;
-		vector_abledDate.push_back(currentTime.GetFormattedTimeAfter(0));
-		vector_abledDate.push_back(currentTime.GetFormattedTimeAfter(1));
-		vector_abledDate.push_back(currentTime.GetFormattedTimeAfter(2));
-	}
-	else {
-		std::cout << "Venue Reservation End Time: " << currentTime.GetFormattedTimeAfter(1) << std::endl;
-		vector_abledDate.push_back(currentTime.GetFormattedTimeAfter(0));
-		vector_abledDate.push_back(currentTime.GetFormattedTimeAfter(1));
-	}
-
-	std::stringstream sstream_sestr;
-
-	httplib::Headers header_VenueInfo;
-	header_VenueInfo.emplace("token", NCU_user_token);
-
-	for (auto& it : vector_abledDate) {
-		sstream_sestr << "?campus=%E5%89%8D%E6%B9%96%E5%8C%97%E9%99%A2&venues=%E5%85%A8%E9%83%A8%E5%9C%BA%E9%A6%86&types=%E7%BE%BD%E6%AF%9B%E7%90%83&date=" << it;
-		do {
-			result_NCU_VenueInfo = client_ndyy_ssl.Get("/api/badminton/areaReservationInformation" + sstream_sestr.str(), header_VenueInfo);
-		} while (!result_NCU_VenueInfo);
-		std::cout << "Get Date: " << it << ", Status Code: " << result_NCU_VenueInfo->status << std::endl;
-		vector_VenueJsonInfo.push_back(ReadJsonFromString(result_NCU_VenueInfo->body));
-		sstream_sestr.str("");
-	}
-
-	std::cout << std::endl;
-
-	std::map<std::string, Json::Value> areaMapping;
-
-	int c = 0;
-	for (auto& it : vector_VenueJsonInfo) {
-		areaMapping.emplace(vector_abledDate[c], it["data"]);
-		std::cout << "===== Date: " << vector_abledDate[c] << " =====" << std::endl;
-		for (auto& it_data : it["data"]) {
+	for (auto& it : areaMapping) {
+		std::cout << "===== Date: " << it.first << " =====" << std::endl;
+		for (auto& it_data : it.second["data"]) {
 			std::cout << "Court " << std::setw(2) << std::setfill('0') << std::stoi(it_data["areaNickname"].asString().substr(4, 10)) << ": ";
 
 			for (int i = 8; i <= 21; i += 1) {
 				std::stringstream s;
 				s << std::setw(2) << std::setfill('0') << i << ":00-" << std::setw(2) << std::setfill('0') << i + 1 << ":00 ";
-				if (c == 0 && i + 1 < currentTime.GetHour()) ColorfulPrint(s.str(), FOREGROUND_RED);
+				if (it == *areaMapping.begin() && i + 1 < CurrentTime().GetHour()) ColorfulPrint(s.str(), FOREGROUND_RED);
 				else if (it_data["time" + std::to_string(i)].asString() == "1") ColorfulPrint(s.str(), FOREGROUND_GREEN);
 				else ColorfulPrint(s.str(), FOREGROUND_RED);
 			}
-
 			std::cout << std::endl;
-
 		}
-		c += 1;
+	}
+
+	if (!reserveNow.empty()) autoReservation(NCU_user_token, reserveNow, areaMapping);
+	
+	for (auto& it : reserveDateList) {
+		std::cout << "Waiting for Date: " << it.Print() << std::endl;
+		while (CurrentTime().GetFormattedTimeDate() < it.Print()) std::this_thread::sleep_for(std::chrono::seconds(30));
+
+		std::cout << "Date: " << it.Print() << " Reached, Waiting for Hour" << std::endl;
+		while (CurrentTime().GetHour() < 11 && CurrentTime().GetMinute() < 58) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		std::cout << "Generating Token." << std::endl;
+		NCU_user_token = GenerateToken(username, password, false);
+
+		while (CurrentTime().GetHour() < 12);
+		std::cout << "Start Reserving for Date: " << it.Print() << std::endl;
+		autoReservation(NCU_user_token, map_abledDate[it], areaMapping);
 	}
 
 	std::cout << "=========== Over ===========" << std::endl << std::endl;
-	
-	std::cout << "Pausing...\r";
-
-	while (currentTime.GetHour() != 11 && currentTime.GetMinute() != 45);
-	std::cout << "Generating Token..." << std::endl;
-	NCU_user_token = GenerateToken(username, password);
-
-	while (currentTime.GetHour() != 12);
-	std::cout << "Reservation..." << std::endl;
-
-	std::vector<std::thread> ReservationThreads;
-
-	for (auto& it : Reservation) {
-		bool doContinue = false;
-		
-		std::cout << "Court: " << std::setw(2) << std::setfill('0') << it.hallID
-			<< ", Date: " << it.date
-			<< ", Time: " << std::setw(2) << std::setfill('0') << it.rTime << ":00-"
-			<< std::setw(2) << std::setfill('0') << it.rTime + 1 << ":00"
-			<< ", Reservation Status: ";
-		
-		if (!isIn(it.date, vector_abledDate)) {
-			ColorfulPrint("Overtime\n", FOREGROUND_RED);
-			doContinue = true;
-		}
-		
-		if (it.hallID < 1 || it.hallID > 12) {
-			ColorfulPrint("Overcount\n", FOREGROUND_RED);
-			doContinue = true;
-		}
-		
-		for (auto& it2 : areaMapping[it.date]) {
-			if (it2["areaNickname"] == "hall" + std::to_string(it.hallID) && it2[std::string("time" + std::to_string(it.rTime))] != 1) {
-				ColorfulPrint("Reserved\n", FOREGROUND_RED);
-				doContinue = true;
-			}
-		}
-		
-		if (doContinue) continue;
-
-		ReservationThreads.push_back(std::thread(AsyncReservation, it, NCU_user_token));
-
-		ColorfulPrint("Reservation Information Verification Passed.\n", FOREGROUND_GREEN);
-	}
-
-	if (!ReservationThreads.empty()) for (auto& it : ReservationThreads) it.join();
-
 	return 0;
 }
