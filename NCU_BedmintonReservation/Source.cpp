@@ -255,8 +255,8 @@ int main() {
 	std::cout << "Password: ";
 	//std::cin >> password;
 
-	username = "5716125061";
-	password = "qaqveQ-3xyzty-vudqut";
+	username = "***************";
+	password = "*************";
 
 	std::vector<ReservationInfo> Reservation;
 
