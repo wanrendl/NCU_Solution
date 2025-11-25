@@ -14,15 +14,15 @@
 #include <time.h>
 
 const std::string Name = "NCU Court Reservation";
-const std::string Version = "v20251125-003200";
+const std::string Version = "v20251125-122400";
 
 const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/login";
 
-static std::string GenerateToken(std::string username, std::string password, bool doGenerate = true) {
+static std::string GenerateToken(std::string username, std::string password) {
 
-	std::string NCU_user_token;
+	std::string NCU_user_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3NjQwNTc0NzQsInVzZXJOYW1lIjoi5p6X56uvIiwidXNlciI6IjU3MTYxMjUwNjEiLCJ0eXBlQ29kZSI6IlMwMiJ9.L_j6TRb6XC73ywZbKhb5XbZdviSGI4kox4JkJ1MTUlE";
 
-	if (!doGenerate) return NCU_user_token;
+	if (!NCU_user_token.empty()) return NCU_user_token;
 
 	const std::string fpVisitorId = "caac21938b004343dbe3191a9b433359";
 
@@ -126,6 +126,21 @@ static std::string GenerateToken(std::string username, std::string password, boo
 	return NCU_user_token;
 }
 
+static bool CheckToken(std::string token, std::string username) {
+	httplib::SSLClient client("ndyy.ncu.edu.cn");
+	httplib::Headers headers;
+	headers.emplace("Token", token);
+	httplib::Result result;
+	std::stringstream ssUsername;
+	ssUsername << "?userId=" << username;
+	do {
+		result = client.Get("/api/badminton/getUserPhone" + ssUsername.str(), headers);
+	} while (!result);
+
+	if (ReadJsonFromString(result->body)["code"].asString() != "200") return false;
+	return true;
+}
+
 void AsyncReservation(ReservationInfo rInfo, std::string token) {
 	CurrentTime curretntTime;
 	httplib::SSLClient client("ndyy.ncu.edu.cn");
@@ -139,24 +154,23 @@ void AsyncReservation(ReservationInfo rInfo, std::string token) {
 	httplib::Headers headers;
 	headers.emplace("Token", token);
 
-	do {
-		result = client.Get("/api/badminton/saveReservationInformation" + ssURI.str(), headers);
-	} while (!result);
-
 	Json::Value ReservationResponse;
 
 	std::ofstream osLog("ReservationLog.txt", std::ios::app);
-	if (!osLog.is_open()) std::cerr << "Failed to Open Log File." << std::endl;
-	osLog << "[" << curretntTime.GetFormattedTime() << "] "
-		<< "Court: " << std::setw(2) << std::setfill('0') << rInfo.hallID
-		<< ", Date: " << rInfo.date
-		<< ", Time: " << std::setw(2) << std::setfill('0') << rInfo.rTime << ":00-"
-		<< std::setw(2) << std::setfill('0') << rInfo.rTime + 1 << ":00"
-		<< ": " << result->body << std::endl;
+	for (int times = 0; times < 3; times += 1) {
+		do {
+			result = client.Get("/api/badminton/saveReservationInformation" + ssURI.str(), headers);
+		} while (!result);
 
-	for (int times = 0; times < 5; times += 1) {
+		osLog << "[" << curretntTime.GetFormattedTime() << "] "
+			<< "Court: " << std::setw(2) << std::setfill('0') << rInfo.hallID
+			<< ", Date: " << rInfo.date
+			<< ", Time: " << std::setw(2) << std::setfill('0') << rInfo.rTime << ":00-"
+			<< std::setw(2) << std::setfill('0') << rInfo.rTime + 1 << ":00"
+			<< ": " << result->body << std::endl;
+
 		if (!Json::Reader().parse(result->body, ReservationResponse)) {
-			ColorfulPrint("Json Parse Failed.\n", FOREGROUND_RED);
+			std::cout << "Json Parse Error, Retrying..." << std::endl;
 			continue;
 		}
 
@@ -166,14 +180,15 @@ void AsyncReservation(ReservationInfo rInfo, std::string token) {
 			<< std::setw(2) << std::setfill('0') << rInfo.rTime + 1 << ":00"
 			<< ": ";
 		if (ReservationResponse["code"].asString() == "200") {
-			ColorfulPrint("Success\n", FOREGROUND_GREEN);
+			std::cout << "Success\n";
 			break;
 		}
-		else if (ReservationResponse["code"].asString() == "600") ColorfulPrint("Processing\n", FOREGROUND_RED);
-		else if (ReservationResponse["code"].asString() == "601") ColorfulPrint("Reserved\n", FOREGROUND_RED);
-		else ColorfulPrint("Unknown Reason\n", FOREGROUND_RED);
+		else if (ReservationResponse["code"].asString() == "600") std::cout << "Processing" << std::endl;
+		else if (ReservationResponse["code"].asString() == "601") std::cout << "Reserved" << std::endl;
+		else std::cout << "Unknown Reason" << std::endl;
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	}
+	osLog.close();
 }
 
 std::map<std::string, Json::Value> GenerateMap(std::string token) {
@@ -228,7 +243,7 @@ static void autoReservation(std::string& token, std::vector<ReservationInfo>& Re
 			doContinue = true;
 		}
 		for (auto& it2 : areaMapping[it.date]["data"]) {
-			if (it2["areaNickname"] == "hall" + std::to_string(it.hallID) && it2[std::string("time" + std::to_string(it.rTime))] != 1) {
+			if (it2["areaNickname"] == "hall" + std::to_string(it.hallID) && it2[std::string("time" + std::to_string(it.rTime))] != "1") {
 				ColorfulPrint("Reserved\n", FOREGROUND_RED);
 				doContinue = true;
 			}
@@ -246,17 +261,20 @@ static void autoReservation(std::string& token, std::vector<ReservationInfo>& Re
 }
 
 int main() {
+	std::ofstream osLog("ReservationLog.txt", std::ios::app);
+	osLog << "[" << CurrentTime().GetFormattedTime() << "] "
+		<< "================ New Reservation Session ================" << std::endl;
 	std::string username, password;
 	std::cout << Name << " - " << Version << std::endl;
 
-	std::cout << "Username: ";
+	//std::cout << "Username: ";
 	//std::cin >> username;
-
-	std::cout << "Password: ";
+	
+	//std::cout << "Password: ";
 	//std::cin >> password;
 
-	username = "***************";
-	password = "*************";
+	username = "5716125061";
+	password = "qaqveQ-3xyzty-vudqut";
 
 	std::vector<ReservationInfo> Reservation;
 
@@ -309,29 +327,33 @@ int main() {
 		return 0;
 	}
 
-	std::cout << "=========== Reservation Info ============" << std::endl;
-	std::cout << "Immediate Reservation Date:" << std::endl;
-	for (auto& it : reserveNow) {
-		std::cout << "  - Court: " << std::setw(2) << std::setfill('0') << it.hallID
-			<< ", Time: " << std::setw(2) << std::setfill('0') << it.rTime << ":00-"
-			<< std::setw(2) << std::setfill('0') << it.rTime + 1 << ":00"
-			<< std::endl;
-	}
-
-	for (auto& it : map_abledDate) {
-		std::cout << "Scheduled Reservation Date: " << it.first.Print() << std::endl;
-		for (auto& it2 : it.second) {
-			std::cout << "  - Court: " << std::setw(2) << std::setfill('0') << it2.hallID
-				<< ", Time: " << std::setw(2) << std::setfill('0') << it2.rTime << ":00-"
-				<< std::setw(2) << std::setfill('0') << it2.rTime + 1 << ":00"
+	std::cout << "============ Reservation Info ============" << std::endl;
+	if (!reserveNow.empty()) {
+		std::cout << "Immediate Reservation Date:" << std::endl;
+		for (auto& it : reserveNow) {
+			std::cout << "  - Court: " << std::setw(2) << std::setfill('0') << it.hallID
+				<< ", Time: " << std::setw(2) << std::setfill('0') << it.rTime << ":00-"
+				<< std::setw(2) << std::setfill('0') << it.rTime + 1 << ":00"
 				<< std::endl;
 		}
 	}
-	std::cout << "========================================" << std::endl << std::endl;
+
+	if (!map_abledDate.empty()) {
+		for (auto& it : map_abledDate) {
+			std::cout << "Scheduled Reservation Date: " << it.first.Print() << std::endl;
+			for (auto& it2 : it.second) {
+				std::cout << "  - Court: " << std::setw(2) << std::setfill('0') << it2.hallID
+					<< ", Time: " << std::setw(2) << std::setfill('0') << it2.rTime << ":00-"
+					<< std::setw(2) << std::setfill('0') << it2.rTime + 1 << ":00"
+					<< std::endl;
+			}
+		}
+	}
+	std::cout << "==========================================" << std::endl << std::endl;
 
 	std::string NCU_user_token;
 
-	std::cout << "GenerateToken" << std::endl;
+	std::cout << "Generating Token." << std::endl;
 	NCU_user_token = GenerateToken(username, password);
 	std::cout << "Token: " << NCU_user_token << std::endl;
 
@@ -361,11 +383,25 @@ int main() {
 		while (CurrentTime().GetFormattedTimeDate() < it.Print()) std::this_thread::sleep_for(std::chrono::seconds(30));
 
 		std::cout << "Date: " << it.Print() << " Reached, Waiting for Hour" << std::endl;
-		while (CurrentTime().GetHour() < 11 && CurrentTime().GetMinute() < 58) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		while (CurrentTime().GetHour() <= 11 || CurrentTime().GetMinute() <= 58) {
+			std::cout << "===== ETA: " << std::setw(2) << std::setfill('0') << 11 - CurrentTime().GetHour() << ":"
+				<< std::setw(2) << std::setfill('0') << 59 - CurrentTime().GetMinute() << ":"
+				<< std::setw(2) << std::setfill('0') << 59 - CurrentTime().GetSecond() << ":"
+			<< std::setw(4) << std::setfill('0') << 1000 - CurrentTime().GetMillisecond() << " =====\r";
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+		
 		std::cout << "Generating Token." << std::endl;
-		NCU_user_token = GenerateToken(username, password, false);
+		NCU_user_token = GenerateToken(username, password);
+		std::cout << "Token Generated." << std::endl;
 
-		while (CurrentTime().GetHour() < 12);
+		while (CurrentTime().GetHour() < 12) {
+			std::cout << "===== ETA: " << std::setw(2) << std::setfill('0') << 11 - CurrentTime().GetHour() << ":"
+				<< std::setw(2) << std::setfill('0') << 59 - CurrentTime().GetMinute() << ":"
+				<< std::setw(2) << std::setfill('0') << 59 - CurrentTime().GetSecond() << ":"
+				<< std::setw(4) << std::setfill('0') << 1000 - CurrentTime().GetMillisecond() << " =====\r";
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
 		std::cout << "Start Reserving for Date: " << it.Print() << std::endl;
 		autoReservation(NCU_user_token, map_abledDate[it], areaMapping);
 	}

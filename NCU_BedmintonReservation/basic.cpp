@@ -36,6 +36,10 @@ void ColorfulPrint(std::string s, WORD wAttributes) {
 	SetConsoleTextAttribute(hConsole, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE); // 重置为默认颜色
 }
 
+CurrentTime::CurrentTime() {
+	now = std::chrono::system_clock::now();
+	currentTime = std::chrono::system_clock::to_time_t(now);
+}
 time_t CurrentTime::GetTimeStamp() {
 	now = std::chrono::system_clock::now();
 	currentTime = std::chrono::system_clock::to_time_t(now);
@@ -73,6 +77,18 @@ int CurrentTime::GetMinute() {
 	currentTime = std::chrono::system_clock::to_time_t(now);
 	std::tm* local_tm = std::localtime(&currentTime);
 	return local_tm->tm_min;
+}
+int CurrentTime::GetSecond() {
+	now = std::chrono::system_clock::now();
+	currentTime = std::chrono::system_clock::to_time_t(now);
+	std::tm* local_tm = std::localtime(&currentTime);
+	return local_tm->tm_sec;
+}
+int CurrentTime::GetMillisecond() {
+	now = std::chrono::system_clock::now();
+	auto duration = now.time_since_epoch();
+	auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() % 1000;
+	return static_cast<int>(milliseconds);
 }
 
 time_t StringToTimeStamp(std::string str) {
@@ -220,4 +236,26 @@ DateCalculator DateCalculator::operator+(int days) const {
 	DateCalculator temp = *this;
 	temp.addDays(days);
 	return temp;
+}
+
+DateCalculator DateCalculator::operator-(const DateCalculator& other) const {
+	// 计算两个日期之间的天数差
+	DateCalculator start = *this;
+	DateCalculator end = other;
+	if (start > end) std::swap(start, end);
+	int days = 0;
+	while (start < end) {
+		start.addDays(1);
+		days++;
+	}
+	return DateCalculator(std::to_string(days));
+}
+
+DateCalculator DateCalculator::operator+(const DateCalculator& other) const {
+	// 将两个日期相加，返回一个新的日期
+	DateCalculator result = *this;
+	result.addDays(other.day);
+	result.addMonths(other.month);
+	result.addYears(other.year);
+	return result;
 }

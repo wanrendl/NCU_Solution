@@ -32,12 +32,15 @@ private:
 	time_t currentTime;
 	std::chrono::system_clock::time_point now;
 public:
+	CurrentTime();
 	time_t GetTimeStamp();
 	std::string GetFormattedTime();
 	std::string GetFormattedTimeDate();
 	std::string GetFormattedTimeAfter(int days);
 	int GetHour();
 	int GetMinute();
+	int GetSecond();
+	int GetMillisecond();
 };
 
 std::vector<std::string> StringSplit(std::string str, char delimiter);
@@ -66,8 +69,10 @@ public:
 	bool operator=(const std::string& date);
 	bool operator-=(int days);
 	DateCalculator operator-(int days) const;
+	DateCalculator operator-(const DateCalculator& other) const;
 	bool operator+=(int days);
 	DateCalculator operator+(int days) const;
+	DateCalculator operator+(const DateCalculator& other) const;
 private:
 	bool isLeapYear(int y) const;
 };
