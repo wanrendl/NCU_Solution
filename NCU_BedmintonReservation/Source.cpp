@@ -14,13 +14,13 @@
 #include <time.h>
 
 const std::string Name = "NCU Court Reservation";
-const std::string Version = "v20251125-122400";
+const std::string Version = "v20251127-231400";
 
 const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/login";
 
 static std::string GenerateToken(std::string username, std::string password) {
 
-	std::string NCU_user_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3NjQwNTc0NzQsInVzZXJOYW1lIjoi5p6X56uvIiwidXNlciI6IjU3MTYxMjUwNjEiLCJ0eXBlQ29kZSI6IlMwMiJ9.L_j6TRb6XC73ywZbKhb5XbZdviSGI4kox4JkJ1MTUlE";
+	std::string NCU_user_token;
 
 	if (!NCU_user_token.empty()) return NCU_user_token;
 
@@ -36,7 +36,7 @@ static std::string GenerateToken(std::string username, std::string password) {
 		result_GET_login = client.Get("/cas/login?service=" + NCU_VenueReservation_Login);
 	} while (!result_GET_login);
 
-	//std::cout << "Login Page Status: " << result_GET_login->status << std::endl;
+	std::cout << "Login Page Status: " << result_GET_login->status << std::endl;
 
 	std::stringstream NCU_login_html(result_GET_login->body);
 
@@ -67,7 +67,7 @@ static std::string GenerateToken(std::string username, std::string password) {
 		analy_NCU_login_html_string.clear();
 	}
 
-	//std::cout << "NCU Execution Get Successfully." << std::endl << std::endl;
+	std::cout << "NCU Execution Get Successfully." << std::endl << std::endl;
 
 	httplib::Params param_mfa;
 	param_mfa.emplace("username", username);
@@ -78,11 +78,11 @@ static std::string GenerateToken(std::string username, std::string password) {
 		result_NCU_mfa = client.Post("/cas/mfa/detect", param_mfa);
 	} while (!result_NCU_mfa);
 
-	//std::cout << "MFA Status: " << result_NCU_mfa->status << std::endl;
+	std::cout << "MFA Status: " << result_NCU_mfa->status << std::endl;
 
 	std::string mfa_state = ReadJsonFromString(result_NCU_mfa->body)["data"]["state"].asString();
 
-	//std::cout << "MFA State: ";
+	std::cout << "MFA State: " << mfa_state << std::endl;
 	//DelayPrint(mfa_state);
 	//std::cout << std::endl << std::endl;
 
@@ -103,23 +103,23 @@ static std::string GenerateToken(std::string username, std::string password) {
 		result_NCU_final_login = client.Post("/cas/login?service=" + NCU_VenueReservation_Login, param_login);
 	} while (!result_NCU_final_login);
 
-	//std::cout << "Ticket Status: " << result_NCU_final_login->status << std::endl;
+	std::cout << "Ticket Status: " << result_NCU_final_login->status << std::endl;
 
 	std::string string_NCU_ticketURL = result_NCU_final_login->get_header_value("Location");
 	std::string NCU_login_ticket = ParseStringPos(string_NCU_ticketURL, string_NCU_ticketURL.find("ticket=") + 7, string_NCU_ticketURL.length());
 
-	//std::cout << "Ticket: " << NCU_login_ticket << std::endl << std::endl;
+	std::cout << "Ticket: " << NCU_login_ticket << std::endl << std::endl;
 
 	do {
 		result_NCU_user_token = client_ndyy.Get("/cas/login?ticket=" + NCU_login_ticket);
 	} while (!result_NCU_user_token);
 
-	//std::cout << "Token Status: " << result_NCU_user_token->status << std::endl;
+	std::cout << "Token Status: " << result_NCU_user_token->status << std::endl;
 
 	std::string string_NCU_tokenURL = result_NCU_user_token->get_header_value("location");
 	NCU_user_token = string_NCU_tokenURL.substr(string_NCU_tokenURL.find("token=") + 6);
 
-	//std::cout << "Token: ";
+	std::cout << "Token: " << NCU_user_token << std::endl;
 	//DelayPrint(NCU_user_token, 1);
 	//std::cout << std::endl << std::endl;
 
@@ -185,13 +185,14 @@ void AsyncReservation(ReservationInfo rInfo, std::string token) {
 		}
 		else if (ReservationResponse["code"].asString() == "600") std::cout << "Processing" << std::endl;
 		else if (ReservationResponse["code"].asString() == "601") std::cout << "Reserved" << std::endl;
-		else std::cout << "Unknown Reason" << std::endl;
+		else if (ReservationResponse["code"].asString() == "401") std::cout << "Invalid Token" << std::endl;
+		else std::cout << "Unknown Reason: " << ReservationResponse["code"].asString() << std::endl;
 		std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	}
 	osLog.close();
 }
 
-std::map<std::string, Json::Value> GenerateMap(std::string token) {
+static std::map<std::string, Json::Value> GenerateMap(std::string token) {
 	std::vector<std::string> vector_abledDate;
 
 	if (CurrentTime().GetHour() >= 12) {
@@ -273,8 +274,8 @@ int main() {
 	//std::cout << "Password: ";
 	//std::cin >> password;
 
-	username = "5716125061";
-	password = "qaqveQ-3xyzty-vudqut";
+	username = "****";
+	password = "****";
 
 	std::vector<ReservationInfo> Reservation;
 
@@ -383,24 +384,20 @@ int main() {
 		while (CurrentTime().GetFormattedTimeDate() < it.Print()) std::this_thread::sleep_for(std::chrono::seconds(30));
 
 		std::cout << "Date: " << it.Print() << " Reached, Waiting for Hour" << std::endl;
-		while (CurrentTime().GetHour() <= 11 || CurrentTime().GetMinute() <= 58) {
-			std::cout << "===== ETA: " << std::setw(2) << std::setfill('0') << 11 - CurrentTime().GetHour() << ":"
-				<< std::setw(2) << std::setfill('0') << 59 - CurrentTime().GetMinute() << ":"
-				<< std::setw(2) << std::setfill('0') << 59 - CurrentTime().GetSecond() << ":"
-			<< std::setw(4) << std::setfill('0') << 1000 - CurrentTime().GetMillisecond() << " =====\r";
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
-		}
-		
-		std::cout << "Generating Token." << std::endl;
-		NCU_user_token = GenerateToken(username, password);
-		std::cout << "Token Generated." << std::endl;
 
-		while (CurrentTime().GetHour() < 12) {
-			std::cout << "===== ETA: " << std::setw(2) << std::setfill('0') << 11 - CurrentTime().GetHour() << ":"
-				<< std::setw(2) << std::setfill('0') << 59 - CurrentTime().GetMinute() << ":"
-				<< std::setw(2) << std::setfill('0') << 59 - CurrentTime().GetSecond() << ":"
-				<< std::setw(4) << std::setfill('0') << 1000 - CurrentTime().GetMillisecond() << " =====\r";
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		CountdownTimer countdownTimer(it.Print() + "12:00:00");
+		countdownTimer.setTimeZone(8);
+		countdownTimer.begin();
+		while (!countdownTimer.isFinished()) {
+
+			if (countdownTimer.print() == "11:55:00") {
+				std::cout << "Generating Token." << std::endl;
+				NCU_user_token = GenerateToken(username, password);
+				std::cout << "Token Generated." << std::endl;
+			}
+
+			std::cout << "===== ETA: " << countdownTimer.print() << " =====\r";
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		}
 		std::cout << "Start Reserving for Date: " << it.Print() << std::endl;
 		autoReservation(NCU_user_token, map_abledDate[it], areaMapping);

@@ -40,7 +40,7 @@ CurrentTime::CurrentTime() {
 	now = std::chrono::system_clock::now();
 	currentTime = std::chrono::system_clock::to_time_t(now);
 }
-time_t CurrentTime::GetTimeStamp() {
+time_t CurrentTime::GetSeconds() {
 	now = std::chrono::system_clock::now();
 	currentTime = std::chrono::system_clock::to_time_t(now);
 	return currentTime;
@@ -91,20 +91,17 @@ int CurrentTime::GetMillisecond() {
 	return static_cast<int>(milliseconds);
 }
 
-time_t StringToTimeStamp(std::string str) {
-	struct tm tm_ {};
-	int year, month, day;
-	sscanf_s(str.c_str(), "%d-%d-%d", &year, &month, &day);
-	tm_.tm_year = year - 1900;
-	tm_.tm_mon = month - 1;
-	tm_.tm_mday = day - 2;
-	tm_.tm_hour = 12;
-	tm_.tm_min = 0;
-	tm_.tm_sec = 0;
-	tm_.tm_isdst = 0;
+time_t StringToTimeStamp(const std::string timeStr) {
+	std::istringstream ss(timeStr);
+	std::chrono::sys_seconds timePoint;
 
-	time_t timeStamp = mktime(&tm_);
-	return timeStamp;
+	ss >> std::chrono::parse("%Y-%m-%d %H:%M:%S", timePoint);
+
+	if (ss.fail()) {
+		return 0;
+	}
+
+	return std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(timePoint));
 }
 
 std::vector<std::string> StringSplit(std::string str, char delimiter) {
@@ -258,4 +255,123 @@ DateCalculator DateCalculator::operator+(const DateCalculator& other) const {
 	result.addMonths(other.month);
 	result.addYears(other.year);
 	return result;
+}
+
+
+TimeCalculator::TimeCalculator() : timestamp(0), hour(0), minute(0), second(0) {}
+TimeCalculator::TimeCalculator(time_t ts) : timestamp(ts) {
+	hour = (timestamp / 3600) % 24;
+	minute = (timestamp / 60) % 60;
+	second = timestamp % 60;
+}
+TimeCalculator::TimeCalculator(std::string timeStr) {
+	std::vector<std::string> timeParts = StringSplit(timeStr, ':');
+	hour = std::stoi(timeParts[0]);
+	minute = std::stoi(timeParts[1]);
+	second = std::stoi(timeParts[2]);
+	timestamp = hour * 3600 + minute * 60 + second;
+}
+time_t TimeCalculator::GetSeconds() const { return timestamp; }
+int TimeCalculator::GetHour() const { return hour; }
+int TimeCalculator::GetMinute() const { return minute; }
+int TimeCalculator::GetSecond() const { return second; }
+bool TimeCalculator::compare(const TimeCalculator& other) const {
+	return timestamp < other.timestamp;
+}
+bool TimeCalculator::compare(const std::string& timeStr) const {
+	TimeCalculator other(timeStr);
+	return timestamp < other.timestamp;
+}
+bool TimeCalculator::compare(time_t ts) const {
+	return timestamp < ts;
+}
+bool TimeCalculator::operator<(const TimeCalculator& other) const {
+	return compare(other);
+}
+bool TimeCalculator::operator<(const std::string& timeStr) const {
+	return compare(timeStr);
+}
+bool TimeCalculator::operator>(const TimeCalculator& other) const {
+	return !compare(other) && timestamp != other.timestamp;
+}
+bool TimeCalculator::operator>(const std::string& timeStr) const {
+	return !compare(timeStr) && timestamp != TimeCalculator(timeStr).timestamp;
+}
+bool TimeCalculator::operator<=(const TimeCalculator& other) const {
+	return !(*this > other);
+}
+bool TimeCalculator::operator>=(const TimeCalculator& other) const {
+	return !(*this < other);
+}
+bool TimeCalculator::operator==(const TimeCalculator& other) const {
+	return timestamp == other.timestamp;
+}
+bool TimeCalculator::operator==(time_t other) const {
+	return timestamp == other;
+}
+bool TimeCalculator::operator=(const std::string& timeStr) {
+	TimeCalculator other(timeStr);
+	timestamp = other.timestamp;
+	hour = other.hour;
+	minute = other.minute;
+	second = other.second;
+	return true;
+}
+bool TimeCalculator::operator-=(int seconds) {
+	timestamp -= seconds;
+	hour = (timestamp / 3600) % 24;
+	minute = (timestamp / 60) % 60;
+	second = timestamp % 60;
+	return true;
+}
+bool TimeCalculator::operator+=(int seconds) {
+	timestamp += seconds;
+	hour = (timestamp / 3600) % 24;
+	minute = (timestamp / 60) % 60;
+	second = timestamp % 60;
+	return true;
+}
+TimeCalculator TimeCalculator::operator-(int seconds) const {
+	TimeCalculator temp = *this;
+	temp -= seconds;
+	return temp;
+}
+TimeCalculator TimeCalculator::operator+(int seconds) const {
+	TimeCalculator temp = *this;
+	temp += seconds;
+	return temp;
+}
+std::string TimeCalculator::print() const {
+	std::stringstream ss;
+	ss << std::setw(std::to_string(hour).length()) << std::setfill('0') << hour << ":"
+		<< std::setw(2) << std::setfill('0') << minute << ":"
+		<< std::setw(2) << std::setfill('0') << second;
+	return ss.str();
+}
+
+CountdownTimer::CountdownTimer(time_t end) {
+	endTime = std::chrono::system_clock::from_time_t(end);
+}
+CountdownTimer::CountdownTimer(std::string endTimeString) {
+	std::istringstream ss(endTimeString);
+	std::chrono::sys_seconds timePoint;
+
+	ss >> std::chrono::parse("%Y-%m-%d %H:%M:%S", timePoint);
+
+	endTime = std::chrono::time_point_cast<std::chrono::system_clock::duration>(timePoint) - timeZoneOffset * std::chrono::hours(1);
+	std::cout << "Timestamp: " << endTime.time_since_epoch().count() << std::endl;
+}
+void CountdownTimer::setTimeZone(unsigned short timeZone) {
+	timeZoneOffset = timeZone;
+}
+void CountdownTimer::begin() {
+	startTime = std::chrono::system_clock::now();
+}
+std::string CountdownTimer::print() const {
+	time_t remaining = std::chrono::duration_cast<std::chrono::seconds>(endTime - std::chrono::system_clock::now()).count();
+	if (remaining < 0) remaining = 0;
+	return TimeCalculator(remaining).print();
+}
+bool CountdownTimer::isFinished() const {
+	return std::chrono::system_clock::now() - timeZoneOffset * std::chrono::hours(1) >= endTime;
 }

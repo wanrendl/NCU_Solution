@@ -27,13 +27,15 @@ void DelayPrint(std::string s, int ms);
 
 void ColorfulPrint(std::string s, WORD wAttributes);
 
+time_t StringToTimeStamp(const std::string timeStr);
+
 class CurrentTime {
 private:
 	time_t currentTime;
 	std::chrono::system_clock::time_point now;
 public:
 	CurrentTime();
-	time_t GetTimeStamp();
+	time_t GetSeconds();
 	std::string GetFormattedTime();
 	std::string GetFormattedTimeDate();
 	std::string GetFormattedTimeAfter(int days);
@@ -77,4 +79,49 @@ private:
 	bool isLeapYear(int y) const;
 };
 
-time_t StringToTimeStamp(std::string str);
+class TimeCalculator {
+private:
+	time_t timestamp;
+	int hour;
+	int minute;
+	int second;
+public:
+	TimeCalculator();
+	TimeCalculator(time_t ts);
+	TimeCalculator(std::string timeStr);
+	time_t GetSeconds() const;
+	int GetHour() const;
+	int GetMinute() const;
+	int GetSecond() const;
+	bool compare(const TimeCalculator& other) const;
+	bool compare(const std::string& timeStr) const;
+	bool compare(time_t ts) const;
+	bool operator<(const TimeCalculator& other) const;
+	bool operator<(const std::string& timeStr) const;
+	bool operator>(const TimeCalculator& other) const;
+	bool operator>(const std::string& timeStr) const;
+	bool operator<=(const TimeCalculator& other) const;
+	bool operator>=(const TimeCalculator& other) const;
+	bool operator==(const TimeCalculator& other) const;
+	bool operator==(time_t other) const;
+	bool operator=(const std::string& timeStr);
+	bool operator-=(int seconds);
+	bool operator+=(int seconds);
+	TimeCalculator operator-(int seconds) const;
+	TimeCalculator operator+(int seconds) const;
+	std::string print() const;
+};
+
+class CountdownTimer {
+private:
+	std::chrono::system_clock::time_point startTime;
+	std::chrono::system_clock::time_point endTime;
+	unsigned short timeZoneOffset = 0;
+public:
+	CountdownTimer(time_t endDate);
+	CountdownTimer(std::string endTimeString);
+	void setTimeZone(unsigned short timeZone);
+	void begin();
+	std::string print() const;
+	bool isFinished() const;
+};
