@@ -14,7 +14,7 @@
 #include <time.h>
 
 const std::string Name = "NCU Court Reservation";
-const std::string Version = "v20251127-231400";
+const std::string Version = "v20251201-095500";
 
 const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/login";
 
@@ -32,96 +32,123 @@ static std::string GenerateToken(std::string username, std::string password) {
 
 	httplib::Result result_GET_login, result_NCU_mfa, result_NCU_final_login, result_NCU_user_token;
 
-	do {
-		result_GET_login = client.Get("/cas/login?service=" + NCU_VenueReservation_Login);
-	} while (!result_GET_login);
+	while (true) {
+		do {
+			result_GET_login = client.Get("/cas/login?service=" + NCU_VenueReservation_Login);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		} while (!result_GET_login);
 
-	std::cout << "Login Page Status: " << result_GET_login->status << std::endl;
+		if (result_GET_login->status != 200) {
+			std::cout << "Login Page Get Failed, Retrying..." << std::endl << std::endl;
+			continue;
+		}
 
-	std::stringstream NCU_login_html(result_GET_login->body);
+		std::cout << "Login Page Status: " << result_GET_login->status << std::endl;
 
-	std::string analy_NCU_login_html_string, NCU_execution_content;
+		std::stringstream NCU_login_html(result_GET_login->body);
 
-	bool doAppend = false;
+		std::string analy_NCU_login_html_string, NCU_execution_content;
 
-	while (getline(NCU_login_html, analy_NCU_login_html_string)) {
-		if (analy_NCU_login_html_string.find("id=\"fm1\"") != -1) doAppend = true;
+		bool doAppend = false;
 
-		if (doAppend) {
-			int start_pos = 0;
-			std::string temp;
-			for (int i = 0; i < analy_NCU_login_html_string.length(); i += 1) {
-				if (analy_NCU_login_html_string[i] == '<') start_pos = i;
-				if (analy_NCU_login_html_string[i] == '>') {
-					temp = ParseStringPos(analy_NCU_login_html_string, start_pos, i);
-					if (temp.find("name=\"execution\"") != -1) NCU_execution_content = ParseStringPos(temp, temp.find("value=\"") + 7, temp.find("\"/>") - 1);
+		while (getline(NCU_login_html, analy_NCU_login_html_string)) {
+			if (analy_NCU_login_html_string.find("id=\"fm1\"") != -1) doAppend = true;
+
+			if (doAppend) {
+				int start_pos = 0;
+				std::string temp;
+				for (int i = 0; i < analy_NCU_login_html_string.length(); i += 1) {
+					if (analy_NCU_login_html_string[i] == '<') start_pos = i;
+					if (analy_NCU_login_html_string[i] == '>') {
+						temp = ParseStringPos(analy_NCU_login_html_string, start_pos, i);
+						if (temp.find("name=\"execution\"") != -1) NCU_execution_content = ParseStringPos(temp, temp.find("value=\"") + 7, temp.find("\"/>") - 1);
+					}
 				}
 			}
+
+			if (doAppend && analy_NCU_login_html_string.find("</el-form>") != -1) {
+				break;
+				doAppend = false;
+			}
+
+			analy_NCU_login_html_string.clear();
 		}
 
-		if (doAppend && analy_NCU_login_html_string.find("</el-form>") != -1) {
-			break;
-			doAppend = false;
+		std::cout << "NCU Execution Get Successfully." << std::endl << std::endl;
+
+		httplib::Params param_mfa;
+		param_mfa.emplace("username", username);
+		param_mfa.emplace("password", password);
+		param_mfa.emplace("fpVisitorId", fpVisitorId);
+
+		do {
+			result_NCU_mfa = client.Post("/cas/mfa/detect", param_mfa);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		} while (!result_NCU_mfa);
+
+		if (result_NCU_mfa->status != 200) {
+			std::cout << "MFA Detection Failed, Retrying..." << std::endl << std::endl;
+			continue;
 		}
 
-		analy_NCU_login_html_string.clear();
+		std::cout << "MFA Status: " << result_NCU_mfa->status << std::endl;
+
+		std::string mfa_state = ReadJsonFromString(result_NCU_mfa->body)["data"]["state"].asString();
+
+		std::cout << "MFA State: " << mfa_state << std::endl;
+		//DelayPrint(mfa_state);
+		//std::cout << std::endl << std::endl;
+
+		httplib::Params param_login;
+		param_login.emplace("username", username);
+		param_login.emplace("password", password);
+		param_login.emplace("fpVisitorId", fpVisitorId);
+		param_login.emplace("mfaState", mfa_state);
+		param_login.emplace("execution", NCU_execution_content);
+		param_login.emplace("currentMenu", "1");
+		param_login.emplace("failN", "0");
+		param_login.emplace("captcha", "");
+		param_login.emplace("geolocation", "");
+		param_login.emplace("_eventId", "submit");
+		param_login.emplace("submit", "Login1");
+
+		do {
+			result_NCU_final_login = client.Post("/cas/login?service=" + NCU_VenueReservation_Login, param_login);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		} while (!result_NCU_final_login);
+
+		if (result_NCU_final_login->status != 200) {
+			std::cout << "Login Failed, Retrying..." << std::endl << std::endl;
+			continue;
+		}
+
+		std::cout << "Ticket Status: " << result_NCU_final_login->status << std::endl;
+
+		std::string string_NCU_ticketURL = result_NCU_final_login->get_header_value("Location");
+		std::string NCU_login_ticket = ParseStringPos(string_NCU_ticketURL, string_NCU_ticketURL.find("ticket=") + 7, string_NCU_ticketURL.length());
+
+		std::cout << "Ticket: " << NCU_login_ticket << std::endl << std::endl;
+
+		do {
+			result_NCU_user_token = client_ndyy.Get("/cas/login?ticket=" + NCU_login_ticket);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		} while (!result_NCU_user_token);
+
+		if (result_GET_login->status != 302) {
+			std::cout << "Token Generation Failed, Retrying..." << std::endl << std::endl;
+			continue;
+		}
+
+		std::cout << "Token Status: " << result_NCU_user_token->status << std::endl;
+
+		std::string string_NCU_tokenURL = result_NCU_user_token->get_header_value("location");
+		NCU_user_token = string_NCU_tokenURL.substr(string_NCU_tokenURL.find("token=") + 6);
+
+		std::cout << "Token: " << NCU_user_token << std::endl;
+		//DelayPrint(NCU_user_token, 1);
+		//std::cout << std::endl << std::endl;
+		break;
 	}
-
-	std::cout << "NCU Execution Get Successfully." << std::endl << std::endl;
-
-	httplib::Params param_mfa;
-	param_mfa.emplace("username", username);
-	param_mfa.emplace("password", password);
-	param_mfa.emplace("fpVisitorId", fpVisitorId);
-
-	do {
-		result_NCU_mfa = client.Post("/cas/mfa/detect", param_mfa);
-	} while (!result_NCU_mfa);
-
-	std::cout << "MFA Status: " << result_NCU_mfa->status << std::endl;
-
-	std::string mfa_state = ReadJsonFromString(result_NCU_mfa->body)["data"]["state"].asString();
-
-	std::cout << "MFA State: " << mfa_state << std::endl;
-	//DelayPrint(mfa_state);
-	//std::cout << std::endl << std::endl;
-
-	httplib::Params param_login;
-	param_login.emplace("username", username);
-	param_login.emplace("password", password);
-	param_login.emplace("fpVisitorId", fpVisitorId);
-	param_login.emplace("mfaState", mfa_state);
-	param_login.emplace("execution", NCU_execution_content);
-	param_login.emplace("currentMenu", "1");
-	param_login.emplace("failN", "0");
-	param_login.emplace("captcha", "");
-	param_login.emplace("geolocation", "");
-	param_login.emplace("_eventId", "submit");
-	param_login.emplace("submit", "Login1");
-
-	do {
-		result_NCU_final_login = client.Post("/cas/login?service=" + NCU_VenueReservation_Login, param_login);
-	} while (!result_NCU_final_login);
-
-	std::cout << "Ticket Status: " << result_NCU_final_login->status << std::endl;
-
-	std::string string_NCU_ticketURL = result_NCU_final_login->get_header_value("Location");
-	std::string NCU_login_ticket = ParseStringPos(string_NCU_ticketURL, string_NCU_ticketURL.find("ticket=") + 7, string_NCU_ticketURL.length());
-
-	std::cout << "Ticket: " << NCU_login_ticket << std::endl << std::endl;
-
-	do {
-		result_NCU_user_token = client_ndyy.Get("/cas/login?ticket=" + NCU_login_ticket);
-	} while (!result_NCU_user_token);
-
-	std::cout << "Token Status: " << result_NCU_user_token->status << std::endl;
-
-	std::string string_NCU_tokenURL = result_NCU_user_token->get_header_value("location");
-	NCU_user_token = string_NCU_tokenURL.substr(string_NCU_tokenURL.find("token=") + 6);
-
-	std::cout << "Token: " << NCU_user_token << std::endl;
-	//DelayPrint(NCU_user_token, 1);
-	//std::cout << std::endl << std::endl;
 
 	return NCU_user_token;
 }
