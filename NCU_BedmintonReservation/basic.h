@@ -1,10 +1,12 @@
 #pragma once
 #include <chrono>
+#include <format>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <vector>
 #include <Windows.h>
+#include <iomanip>
 
 struct ReservationInfo {
 	std::string date;
@@ -79,49 +81,45 @@ private:
 	bool isLeapYear(int y) const;
 };
 
-class TimeCalculator {
+class UTCTimer {
 private:
-	time_t timestamp;
-	int hour;
-	int minute;
-	int second;
+	std::chrono::time_point<std::chrono::steady_clock> startTime;
+	int timezoneOffsetHours = 0; // UTC offset in hours
 public:
-	TimeCalculator();
-	TimeCalculator(time_t ts);
-	TimeCalculator(std::string timeStr);
-	time_t GetSeconds() const;
-	int GetHour() const;
-	int GetMinute() const;
-	int GetSecond() const;
-	bool compare(const TimeCalculator& other) const;
-	bool compare(const std::string& timeStr) const;
-	bool compare(time_t ts) const;
-	bool operator<(const TimeCalculator& other) const;
-	bool operator<(const std::string& timeStr) const;
-	bool operator>(const TimeCalculator& other) const;
-	bool operator>(const std::string& timeStr) const;
-	bool operator<=(const TimeCalculator& other) const;
-	bool operator>=(const TimeCalculator& other) const;
-	bool operator==(const TimeCalculator& other) const;
-	bool operator==(time_t other) const;
-	bool operator=(const std::string& timeStr);
-	bool operator-=(int seconds);
-	bool operator+=(int seconds);
-	TimeCalculator operator-(int seconds) const;
-	TimeCalculator operator+(int seconds) const;
-	std::string print() const;
+	UTCTimer() {
+		startTime = std::chrono::steady_clock::now();
+	}
+	void setTimezoneOffset(int offsetHours) {
+		timezoneOffsetHours = offsetHours;
+	}
+	std::string getCurrentTimeString() const {
+		return std::format("{:%Y-%m-%d %H:%M:%S}", std::chrono::system_clock::now());
+	}
+	std::string getCurrentDateString() const {
+		return std::format("{:%Y-%m-%d}", std::chrono::system_clock::now());
+	}
+	std::string getCurrentClockString() const {
+		return std::format("{:%H:%M:%S}", std::chrono::system_clock::now());
+	}
+	std::string getSpecificTimeString(time_t timestamp) const {
+		return std::format("{:%Y-%m-%d %H:%M:%S}", std::chrono::system_clock::from_time_t(timestamp));
+	}
 };
 
 class CountdownTimer {
 private:
-	std::chrono::system_clock::time_point startTime;
-	std::chrono::system_clock::time_point endTime;
-	unsigned short timeZoneOffset = 0;
+	std::chrono::seconds endTime;
+	std::chrono::seconds startTime;
 public:
-	CountdownTimer(time_t endDate);
-	CountdownTimer(std::string endTimeString);
-	void setTimeZone(unsigned short timeZone);
+	CountdownTimer();
+	CountdownTimer(time_t endstamp);
+	CountdownTimer(std::string timeString);
+	CountdownTimer(std::string date, std::string clock);
 	void begin();
-	std::string print() const;
 	bool isFinished() const;
+	int getRemainingSeconds() const;
+	bool compare(std::string time_str);
+	bool compare(std::string time_date, std::string time_clock);
+	std::string getRemainingTimeString() const;
+	std::chrono::seconds StringToTimeStamp(const std::string timeStr);
 };

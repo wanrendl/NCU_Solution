@@ -92,16 +92,11 @@ int CurrentTime::GetMillisecond() {
 }
 
 time_t StringToTimeStamp(const std::string timeStr) {
+	std::tm tm = {};
 	std::istringstream ss(timeStr);
-	std::chrono::sys_seconds timePoint;
-
-	ss >> std::chrono::parse("%Y-%m-%d %H:%M:%S", timePoint);
-
-	if (ss.fail()) {
-		return 0;
-	}
-
-	return std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(timePoint));
+	ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+	if (ss.fail()) return 0;
+	return std::chrono::system_clock::to_time_t(std::chrono::system_clock::from_time_t(std::mktime(&tm)));
 }
 
 std::vector<std::string> StringSplit(std::string str, char delimiter) {
@@ -257,121 +252,68 @@ DateCalculator DateCalculator::operator+(const DateCalculator& other) const {
 	return result;
 }
 
-
-TimeCalculator::TimeCalculator() : timestamp(0), hour(0), minute(0), second(0) {}
-TimeCalculator::TimeCalculator(time_t ts) : timestamp(ts) {
-	hour = (timestamp / 3600) % 24;
-	minute = (timestamp / 60) % 60;
-	second = timestamp % 60;
+CountdownTimer::CountdownTimer() : startTime(std::chrono::seconds(0)), endTime(std::chrono::seconds(0)) {}
+CountdownTimer::CountdownTimer(time_t endstamp) : startTime(std::chrono::seconds(0)) {
+	endTime = std::chrono::seconds(endstamp);
 }
-TimeCalculator::TimeCalculator(std::string timeStr) {
-	std::vector<std::string> timeParts = StringSplit(timeStr, ':');
-	hour = std::stoi(timeParts[0]);
-	minute = std::stoi(timeParts[1]);
-	second = std::stoi(timeParts[2]);
-	timestamp = hour * 3600 + minute * 60 + second;
+CountdownTimer::CountdownTimer(std::string timeString) : startTime(std::chrono::seconds(0)) {
+	std::tm tm = {};
+	std::istringstream ss(timeString);
+	ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+	if (ss.fail()) {
+		throw std::runtime_error("Ê±¼ä×Ö·û´®½âÎöÊ§°Ü: " + timeString);
+	}
+	auto tp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+	endTime = std::chrono::duration_cast<std::chrono::seconds>(tp.time_since_epoch());
 }
-time_t TimeCalculator::GetSeconds() const { return timestamp; }
-int TimeCalculator::GetHour() const { return hour; }
-int TimeCalculator::GetMinute() const { return minute; }
-int TimeCalculator::GetSecond() const { return second; }
-bool TimeCalculator::compare(const TimeCalculator& other) const {
-	return timestamp < other.timestamp;
-}
-bool TimeCalculator::compare(const std::string& timeStr) const {
-	TimeCalculator other(timeStr);
-	return timestamp < other.timestamp;
-}
-bool TimeCalculator::compare(time_t ts) const {
-	return timestamp < ts;
-}
-bool TimeCalculator::operator<(const TimeCalculator& other) const {
-	return compare(other);
-}
-bool TimeCalculator::operator<(const std::string& timeStr) const {
-	return compare(timeStr);
-}
-bool TimeCalculator::operator>(const TimeCalculator& other) const {
-	return !compare(other) && timestamp != other.timestamp;
-}
-bool TimeCalculator::operator>(const std::string& timeStr) const {
-	return !compare(timeStr) && timestamp != TimeCalculator(timeStr).timestamp;
-}
-bool TimeCalculator::operator<=(const TimeCalculator& other) const {
-	return !(*this > other);
-}
-bool TimeCalculator::operator>=(const TimeCalculator& other) const {
-	return !(*this < other);
-}
-bool TimeCalculator::operator==(const TimeCalculator& other) const {
-	return timestamp == other.timestamp;
-}
-bool TimeCalculator::operator==(time_t other) const {
-	return timestamp == other;
-}
-bool TimeCalculator::operator=(const std::string& timeStr) {
-	TimeCalculator other(timeStr);
-	timestamp = other.timestamp;
-	hour = other.hour;
-	minute = other.minute;
-	second = other.second;
-	return true;
-}
-bool TimeCalculator::operator-=(int seconds) {
-	timestamp -= seconds;
-	hour = (timestamp / 3600) % 24;
-	minute = (timestamp / 60) % 60;
-	second = timestamp % 60;
-	return true;
-}
-bool TimeCalculator::operator+=(int seconds) {
-	timestamp += seconds;
-	hour = (timestamp / 3600) % 24;
-	minute = (timestamp / 60) % 60;
-	second = timestamp % 60;
-	return true;
-}
-TimeCalculator TimeCalculator::operator-(int seconds) const {
-	TimeCalculator temp = *this;
-	temp -= seconds;
-	return temp;
-}
-TimeCalculator TimeCalculator::operator+(int seconds) const {
-	TimeCalculator temp = *this;
-	temp += seconds;
-	return temp;
-}
-std::string TimeCalculator::print() const {
-	std::stringstream ss;
-	ss << std::setw(std::to_string(hour).length()) << std::setfill('0') << hour << ":"
-		<< std::setw(2) << std::setfill('0') << minute << ":"
-		<< std::setw(2) << std::setfill('0') << second;
-	return ss.str();
-}
-
-CountdownTimer::CountdownTimer(time_t end) {
-	endTime = std::chrono::system_clock::from_time_t(end);
-}
-CountdownTimer::CountdownTimer(std::string endTimeString) {
-	std::istringstream ss(endTimeString);
-	std::chrono::sys_seconds timePoint;
-
-	ss >> std::chrono::parse("%Y-%m-%d %H:%M:%S", timePoint);
-
-	endTime = std::chrono::time_point_cast<std::chrono::system_clock::duration>(timePoint) - timeZoneOffset * std::chrono::hours(1);
-	std::cout << "Timestamp: " << endTime.time_since_epoch().count() << std::endl;
-}
-void CountdownTimer::setTimeZone(unsigned short timeZone) {
-	timeZoneOffset = timeZone;
+CountdownTimer::CountdownTimer(std::string date, std::string clock) : startTime(std::chrono::seconds(0)) {
+	std::tm tm = {};
+	std::istringstream ss(date + " " + clock);
+	ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+	if (ss.fail()) {
+		throw std::runtime_error("Ê±¼ä×Ö·û´®½âÎöÊ§°Ü: " + date + " " + clock);
+	}
+	auto tp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+	endTime = std::chrono::duration_cast<std::chrono::seconds>(tp.time_since_epoch());
+	std::cout << "Endtime: " << endTime.count() << std::endl;
 }
 void CountdownTimer::begin() {
-	startTime = std::chrono::system_clock::now();
-}
-std::string CountdownTimer::print() const {
-	time_t remaining = std::chrono::duration_cast<std::chrono::seconds>(endTime - std::chrono::system_clock::now()).count();
-	if (remaining < 0) remaining = 0;
-	return TimeCalculator(remaining).print();
+	startTime = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch());
 }
 bool CountdownTimer::isFinished() const {
-	return std::chrono::system_clock::now() - timeZoneOffset * std::chrono::hours(1) >= endTime;
+	return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()) >= endTime;
+}
+int CountdownTimer::getRemainingSeconds() const {
+	auto now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch());
+	if (now >= endTime) return 0;
+	return std::chrono::duration_cast<std::chrono::seconds>(endTime - now).count();
+}
+bool CountdownTimer::compare(std::string time_str) {
+	if (StringToTimeStamp(time_str) == std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())) return true;
+	return false;
+}
+bool CountdownTimer::compare(std::string time_date, std::string time_clock) {
+	std::chrono::seconds targetTime = this->StringToTimeStamp(time_date + " " + time_clock);
+	std::chrono::seconds currentTime = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch());
+	if (targetTime == currentTime) return true;
+	return false;
+}
+std::string CountdownTimer::getRemainingTimeString() const {
+	int totalSeconds = getRemainingSeconds();
+	int hours = totalSeconds / 3600;
+	int minutes = (totalSeconds % 3600) / 60;
+	int seconds = totalSeconds % 60;
+	std::ostringstream oss;
+	oss << std::setw(std::to_string(hours).length()) << std::setfill('0') << hours << ":"
+		<< std::setw(2) << std::setfill('0') << minutes << ":"
+		<< std::setw(2) << std::setfill('0') << seconds;
+	return oss.str();
+}
+std::chrono::seconds CountdownTimer::StringToTimeStamp(const std::string timeStr) {
+	std::tm tm = {};
+	std::istringstream ss(timeStr);
+	ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+	if (ss.fail()) return std::chrono::seconds(0);
+	auto tp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+	return std::chrono::duration_cast<std::chrono::seconds>(tp.time_since_epoch());
 }

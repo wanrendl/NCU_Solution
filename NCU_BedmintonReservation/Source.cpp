@@ -14,7 +14,7 @@
 #include <time.h>
 
 const std::string Name = "NCU Court Reservation";
-const std::string Version = "v20251201-095500";
+const std::string Version = "v20251204-133800";
 
 const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/login";
 
@@ -117,7 +117,9 @@ static std::string GenerateToken(std::string username, std::string password) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		} while (!result_NCU_final_login);
 
-		if (result_NCU_final_login->status != 200) {
+		std::cout << "Final Login Status: " << result_NCU_final_login->status << std::endl;
+
+		if (result_NCU_final_login->status != 302) {
 			std::cout << "Login Failed, Retrying..." << std::endl << std::endl;
 			continue;
 		}
@@ -134,7 +136,9 @@ static std::string GenerateToken(std::string username, std::string password) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		} while (!result_NCU_user_token);
 
-		if (result_GET_login->status != 302) {
+		std::cout << "User Token Generation Status: " << result_NCU_user_token->status << std::endl;
+
+		if (result_NCU_user_token->status != 302) {
 			std::cout << "Token Generation Failed, Retrying..." << std::endl << std::endl;
 			continue;
 		}
@@ -184,7 +188,7 @@ void AsyncReservation(ReservationInfo rInfo, std::string token) {
 	Json::Value ReservationResponse;
 
 	std::ofstream osLog("ReservationLog.txt", std::ios::app);
-	for (int times = 0; times < 3; times += 1) {
+	for (int times = 0; times < 2; times += 1) {
 		do {
 			result = client.Get("/api/badminton/saveReservationInformation" + ssURI.str(), headers);
 		} while (!result);
@@ -301,8 +305,8 @@ int main() {
 	//std::cout << "Password: ";
 	//std::cin >> password;
 
-	username = "****";
-	password = "****";
+	username = "***";
+	password = "***";
 
 	std::vector<ReservationInfo> Reservation;
 
@@ -407,24 +411,19 @@ int main() {
 	if (!reserveNow.empty()) autoReservation(NCU_user_token, reserveNow, areaMapping);
 	
 	for (auto& it : reserveDateList) {
-		std::cout << "Waiting for Date: " << it.Print() << std::endl;
-		while (CurrentTime().GetFormattedTimeDate() < it.Print()) std::this_thread::sleep_for(std::chrono::seconds(30));
+		CountdownTimer countdown(it.Print(), "12:00:01");
+		countdown.begin();
+		while (!countdown.isFinished()) {
+			
+			std::cout << "===== ETA: " << countdown.getRemainingTimeString() << " =====\r";
 
-		std::cout << "Date: " << it.Print() << " Reached, Waiting for Hour" << std::endl;
-
-		CountdownTimer countdownTimer(it.Print() + "12:00:00");
-		countdownTimer.setTimeZone(8);
-		countdownTimer.begin();
-		while (!countdownTimer.isFinished()) {
-
-			if (countdownTimer.print() == "11:55:00") {
+			if (countdown.compare(it.Print(), "11:58:00")) {
 				std::cout << "Generating Token." << std::endl;
 				NCU_user_token = GenerateToken(username, password);
 				std::cout << "Token Generated." << std::endl;
 			}
 
-			std::cout << "===== ETA: " << countdownTimer.print() << " =====\r";
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
 		std::cout << "Start Reserving for Date: " << it.Print() << std::endl;
 		autoReservation(NCU_user_token, map_abledDate[it], areaMapping);
