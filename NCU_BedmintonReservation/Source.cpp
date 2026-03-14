@@ -214,7 +214,7 @@ void AsyncReservation(ReservationInfo rInfo, std::string token) {
 			std::cout << "Success\n";
 			break;
 		}
-		else if (ReservationResponse["code"].asString() == "600") std::cout << "Processing" << std::endl;
+		else if (ReservationResponse["code"].asString() == "600") std::cout << "Processing / ExcessiveFrequency / TemporaryRestriction" << std::endl;
 		else if (ReservationResponse["code"].asString() == "601") std::cout << "Reserved" << std::endl;
 		else if (ReservationResponse["code"].asString() == "401") std::cout << "Invalid Token" << std::endl;
 		else std::cout << "Unknown Reason: " << ReservationResponse["code"].asString() << std::endl;
@@ -305,8 +305,8 @@ int main() {
 	//std::cout << "Password: ";
 	//std::cin >> password;
 
-	username = "***";
-	password = "***";
+	username = "5716125061";
+	password = "qaqveQ-3xyzty-vudqut";
 
 	std::vector<ReservationInfo> Reservation;
 
@@ -411,7 +411,7 @@ int main() {
 	if (!reserveNow.empty()) autoReservation(NCU_user_token, reserveNow, areaMapping);
 	
 	for (auto& it : reserveDateList) {
-		CountdownTimer countdown(it.Print(), "12:00:01");
+		CountdownTimer countdown(it.Print(), "12:00:02");
 		countdown.begin();
 		while (!countdown.isFinished()) {
 			

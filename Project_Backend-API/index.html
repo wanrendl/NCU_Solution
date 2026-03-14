@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>任务管理面板</title>
+	<script src="./tailwindcss.min.js"></script>
+	<link href="./font-awesome.min.css" rel="stylesheet">
+	<style>
+		* {
+			box-sizing: border-box;
+		}
+
+		.card-hover {
+			transition: all 0.25s ease;
+		}
+
+		.card-hover:hover {
+			transform: translateY(-3px);
+			box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);
+		}
+
+		input[type="date"] {
+			min-height: 38px;
+		}
+
+		select {
+			min-height: 38px;
+		}
+
+       .layout-top {
+            display: grid;
+            grid-template-columns: minmax(240px, 315px) 1fr;
+            gap: 12px;
+        }
+
+        .grid-wrap {
+            overflow-x: auto;
+        }
+
+        .status-grid {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 12px;
+        }
+
+        .status-grid th,
+        .status-grid td {
+            border: 1px solid #e5e7eb;
+            padding: 4px;
+            text-align: center;
+        }
+
+        .status-grid td {
+            height: 24px;
+        }
+
+        .cell-empty {
+            background: #f3f4f6;
+        }
+
+        .cell-waiting {
+            background: #93c5fd;
+        }
+
+        .cell-success {
+            background: #42B983;
+        }
+
+        .cell-teaching {
+            background: #7f1d1d;
+        }
+
+        .cell-timeout {
+            background: #9ca3af;
+        }
+
+        .cell-failed {
+            background: #F56C6C;
+        }
+
+        body {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+	</style>
+</head>
+<body class="bg-gray-50 min-h-screen m-0 p-0">
+   <div class="max-w-7xl mx-auto px-4 py-6">
+        <div class="layout-top mb-6">
+            <div class="bg-white rounded-xl shadow p-5 card-hover">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">设定预约任务</h2>
+                <div class="flex flex-col items-center gap-4 mb-4">
+                    <div class="w-full max-w-sm">
+                        <label class="block text-sm text-gray-600 mb-1">日期选择</label>
+                        <input type="date" id="date" class="w-full h-10 border border-gray-300 rounded-lg px-3 outline-none focus:border-blue-500">
+                    </div>
+                   <div class="w-full max-w-sm">
+                        <label class="block text-sm text-gray-600 mb-1">场地选择</label>
+                        <select id="num" class="w-full h-10 border border-gray-300 rounded-lg px-3 outline-none focus:border-blue-500">
+                            <option value="">请选择场地</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8">8</option>
+                            <option value="9">9</option>
+                            <option value="10">10</option>
+                            <option value="11">11</option>
+                            <option value="12">12</option>
+                        </select>
+                    </div>
+                   <div class="w-full max-w-sm">
+                        <label class="block text-sm text-gray-600 mb-1">时间选择</label>
+                        <select id="text" class="w-full h-10 border border-gray-300 rounded-lg px-3 outline-none focus:border-blue-500">
+                            <option value="">请选择时间</option>
+                            <option value="8">8:00-9:00</option>
+                            <option value="9">9:00-10:00</option>
+                            <option value="10">10:00-11:00</option>
+                            <option value="11">11:00-12:00</option>
+                            <option value="12">12:00-13:00</option>
+                            <option value="13">13:00-14:00</option>
+                            <option value="14">14:00-15:00</option>
+                            <option value="15">15:00-16:00</option>
+                            <option value="16">16:00-17:00</option>
+                            <option value="17">17:00-18:00</option>
+                            <option value="18">18:00-19:00</option>
+                            <option value="19">19:00-20:00</option>
+                            <option value="20">20:00-21:00</option>
+                            <option value="21">21:00-22:00</option>
+                        </select>
+                    </div>
+                </div>
+               <p id="form-message" class="text-sm text-gray-500 mb-3">请提交信息</p>
+                <div class="text-center">
+                    <button id="add-btn" type="button" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg transition">
+                        <i class="fa fa-plus mr-1"></i> Submit
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow p-5 card-hover">
+                <div class="flex items-center justify-between mb-3">
+                  <h2 class="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                        <span>场地状态表</span>
+                        <span id="status-grid-date" class="text-gray-500 font-normal"></span>
+                    </h2>
+                  <div class="flex items-center gap-3 text-xs text-gray-500">
+                        <span id="status-grid-last-update" class="last-update-text">Last Update：-</span>
+                        <button id="refresh-grid-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100 text-xs">
+                            <i class="fa fa-refresh mr-1"></i>刷新
+                        </button>
+                    </div>
+                </div>
+                <div class="grid-wrap">
+                    <table id="status-grid" class="status-grid"></table>
+                </div>
+            </div>
+        </div>
+
+		<div class="bg-white rounded-xl shadow p-5 mb-6 card-hover">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-xl font-semibold text-gray-800 flex items-center">
+					<i class="fa fa-list-ul text-blue-600 mr-2"></i>已添加
+				</h2>
+                <span id="added-message" class="text-sm text-gray-500 mr-2"></span>
+				<button id="refresh-added-btn" type="button" class="text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition">
+					<i class="fa fa-refresh mr-1"></i>刷新
+				</button>
+			</div>
+			<div id="list-added" class="space-y-3"></div>
+          <div class="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                <label for="page-size-added" class="text-gray-600">每页显示</label>
+                <select id="page-size-added" class="border border-gray-300 rounded px-2 py-1">
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                </select>
+                <span id="page-info-added" class="text-gray-500">第 1 / 1 页</span>
+                <button id="prev-added-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">上一页</button>
+                <button id="next-added-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">下一页</button>
+            </div>
+		</div>
+
+		<div class="bg-white rounded-xl shadow p-5 card-hover">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-xl font-semibold text-gray-800 flex items-center">
+					<i class="fa fa-check-circle text-green-600 mr-2"></i>已结束
+				</h2>
+               <span id="finished-message" class="text-sm text-gray-500 mr-2"></span>
+				<button id="refresh-finished-btn" type="button" class="text-sm bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition">
+					<i class="fa fa-refresh mr-1"></i>刷新
+				</button>
+			</div>
+			<div id="list-finished" class="space-y-3"></div>
+          <div class="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                <label for="page-size-finished" class="text-gray-600">每页显示</label>
+                <select id="page-size-finished" class="border border-gray-300 rounded px-2 py-1">
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                </select>
+                <span id="page-info-finished" class="text-gray-500">第 1 / 1 页</span>
+                <button id="prev-finished-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">上一页</button>
+                <button id="next-finished-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">下一页</button>
+            </div>
+		</div>
+	</div>
+
+	<script>
+		const API_ENDPOINTS = {
+			addTask: '/api/tasks/add',
+			refreshTasks: '/api/tasks/refresh',
+         deleteTask: '/api/tasks/delete',
+          refreshGrid: '/api/tasks/refresh'
+		};
+
+		const addBtn = document.getElementById('add-btn');
+		const refreshAddedBtn = document.getElementById('refresh-added-btn');
+		const refreshFinishedBtn = document.getElementById('refresh-finished-btn');
+		const dateInput = document.getElementById('date');
+		const numSelect = document.getElementById('num');
+		const textSelect = document.getElementById('text');
+		const addedList = document.getElementById('list-added');
+		const finishedList = document.getElementById('list-finished');
+        const addedMessage = document.getElementById('added-message');
+        const finishedMessage = document.getElementById('finished-message');
+       const statusGrid = document.getElementById('status-grid');
+        const statusGridDate = document.getElementById('status-grid-date');
+        const statusGridLastUpdate = document.getElementById('status-grid-last-update');
+        const refreshGridBtn = document.getElementById('refresh-grid-btn');
+        const pageSizeAdded = document.getElementById('page-size-added');
+        const pageSizeFinished = document.getElementById('page-size-finished');
+        const pageInfoAdded = document.getElementById('page-info-added');
+        const pageInfoFinished = document.getElementById('page-info-finished');
+        const prevAddedBtn = document.getElementById('prev-added-btn');
+        const nextAddedBtn = document.getElementById('next-added-btn');
+        const prevFinishedBtn = document.getElementById('prev-finished-btn');
+        const nextFinishedBtn = document.getElementById('next-finished-btn');
+		const formMessage = document.getElementById('form-message');
+        let gridTableData = [];
+        let gridOverdate = false;
+
+        document.addEventListener('copy', function (event) {
+            event.preventDefault();
+        });
+        document.addEventListener('cut', function (event) {
+            event.preventDefault();
+        });
+        document.addEventListener('selectstart', function (event) {
+            event.preventDefault();
+        });
+        document.addEventListener('keydown', function (event) {
+            const key = String(event.key || '').toLowerCase();
+            if ((event.ctrlKey || event.metaKey) && (key === 'c' || key === 'x' || key === 'insert')) {
+                event.preventDefault();
+            }
+        });
+
+        const pagerState = {
+            added: {
+                tasks: [],
+                page: 1,
+                pageSize: Number(pageSizeAdded.value)
+            },
+            finished: {
+                tasks: [],
+                page: 1,
+                pageSize: Number(pageSizeFinished.value)
+            }
+        };
+
+		addBtn.addEventListener('click', addItem);
+		refreshAddedBtn.addEventListener('click', function () {
+			refreshTasks('added');
+		});
+		refreshFinishedBtn.addEventListener('click', function () {
+			refreshTasks('finished');
+		});
+		addedList.addEventListener('click', handleListAction);
+		finishedList.addEventListener('click', handleListAction);
+        statusGrid.addEventListener('click', handleStatusGridClick);
+        pageSizeAdded.addEventListener('change', function () {
+            pagerState.added.pageSize = Number(pageSizeAdded.value) || 5;
+            pagerState.added.page = 1;
+            renderPanel('added');
+        });
+        pageSizeFinished.addEventListener('change', function () {
+            pagerState.finished.pageSize = Number(pageSizeFinished.value) || 5;
+            pagerState.finished.page = 1;
+            renderPanel('finished');
+        });
+        prevAddedBtn.addEventListener('click', function () { changePage('added', -1); });
+        nextAddedBtn.addEventListener('click', function () { changePage('added', 1); });
+        prevFinishedBtn.addEventListener('click', function () { changePage('finished', -1); });
+        nextFinishedBtn.addEventListener('click', function () { changePage('finished', 1); });
+        refreshGridBtn.addEventListener('click', async function () {
+            setButtonLoading(refreshGridBtn, true, '刷新中...');
+            try {
+               await refreshGridOnly();
+            } finally {
+                setButtonLoading(refreshGridBtn, false, '刷新中...');
+            }
+        });
+
+		function getTodayDate() {
+			return new Date().toISOString().split('T')[0];
+		}
+
+        function getNowDateTimeString() {
+            const now = new Date();
+            const yyyy = now.getFullYear();
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const dd = String(now.getDate()).padStart(2, '0');
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mi = String(now.getMinutes()).padStart(2, '0');
+            const ss = String(now.getSeconds()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+        }
+
+		function formatCourt(court) {
+			if (!court) return 'Court-xx';
+			const raw = String(court);
+			if (raw.toLowerCase().startsWith('court-')) return raw;
+			return `Court-${raw}`;
+		}
+
+		function formatTimeRange(time) {
+			if (!time) return 'xx:00-yy:00';
+			const raw = String(time);
+			const rangeMatch = raw.match(/^(\d{1,2}):00-(\d{1,2}):00$/);
+			if (rangeMatch) {
+				const start = rangeMatch[1].padStart(2, '0');
+				const end = rangeMatch[2].padStart(2, '0');
+				return `${start}:00-${end}:00`;
+			}
+			if (/^\d{1,2}$/.test(raw)) {
+				const startHour = Number(raw);
+				if (!Number.isNaN(startHour) && startHour >= 0 && startHour <= 23) {
+					const endHour = (startHour + 1) % 24;
+					return `${String(startHour).padStart(2, '0')}:00-${String(endHour).padStart(2, '0')}:00`;
+				}
+			}
+			return raw;
+		}
+
+		dateInput.min = getTodayDate();
+		dateInput.value = getTodayDate();
+        dateInput.addEventListener('change', async function () {
+            try {
+                setButtonLoading(refreshGridBtn, true, '刷新中...');
+                await refreshGridOnly();
+            } finally {
+                setButtonLoading(refreshGridBtn, false, '刷新中...');
+            }
+        });
+
+        const gridTimeSlots = Array.from({ length: 14 }, function (_, i) {
+            const start = 8 + i;
+            const end = start + 1;
+            return `${start}:00-${end}:00`;
+        });
+
+		function setFormMessage(type, text) {
+			formMessage.classList.remove('text-gray-500', 'text-red-600', 'text-green-600');
+
+			if (type === 'error') {
+				formMessage.classList.add('text-red-600');
+			} else if (type === 'success') {
+				formMessage.classList.add('text-green-600');
+			} else {
+				formMessage.classList.add('text-gray-500');
+			}
+
+			formMessage.textContent = text;
+		}
+
+        function setPanelMessage(panel, type, text) {
+            const target = panel === 'finished' ? finishedMessage : addedMessage;
+            if (!target) return;
+
+            target.classList.remove('text-gray-500', 'text-red-600', 'text-green-600');
+            if (type === 'error') {
+                target.classList.add('text-red-600');
+            } else if (type === 'success') {
+                target.classList.add('text-green-600');
+            } else {
+                target.classList.add('text-gray-500');
+            }
+            target.textContent = text || '';
+        }
+
+		function setButtonLoading(button, isLoading, loadingText) {
+			if (isLoading) {
+				button.dataset.originalHtml = button.innerHTML;
+				button.disabled = true;
+				button.classList.add('opacity-60', 'cursor-not-allowed');
+				button.textContent = loadingText;
+				return;
+			}
+
+			button.disabled = false;
+			button.classList.remove('opacity-60', 'cursor-not-allowed');
+			if (button.dataset.originalHtml) {
+				button.innerHTML = button.dataset.originalHtml;
+				delete button.dataset.originalHtml;
+			}
+		}
+
+		function getFormPayload() {
+			return {
+				date: dateInput.value,
+				court: numSelect.value,
+				time: textSelect.value
+			};
+		}
+
+		async function postToServer(url, payload) {
+			const response = await fetch(url, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify(payload)
+			});
+
+			let result = null;
+			try {
+				result = await response.json();
+			} catch (error) {
+				result = null;
+			}
+
+			if (!response.ok) {
+				throw new Error((result && result.message) || '服务器请求失败');
+			}
+
+			if (result && result.success === false) {
+				throw new Error(result.message || '服务器返回失败');
+			}
+
+			return result || {};
+		}
+
+		function normalizeTask(task) {
+			if (!task || typeof task !== 'object') {
+				return {
+					date: getTodayDate(),
+					court: '',
+					time: '',
+                    text: '',
+                    message: '',
+                        uniqueid: '',
+                        resultStatus: '',
+                        resultInfo: ''
+				};
+			}
+
+            const responseData = task.response && task.response.data ? task.response.data : {};
+            const resultStatus = String(responseData.status || task.status || '').toLowerCase();
+            const resultInfo = String(responseData.info || task.info || task.message || '').trim();
+
+			return {
+				date: task.date || task.taskDate || getTodayDate(),
+				court: task.court || task.number || task.num || task.value || '',
+				time: task.time || task.timeRange || '',
+             text: task.text || task.title || task.content || '',
+                message: task.message || task.content || '',
+                   uniqueid: task.uniqueid || task.uniqueId || task.id || '',
+                    resultStatus: resultStatus,
+                    resultInfo: resultInfo
+			};
+		}
+
+		function createTaskItem(task, isFinished) {
+			const normalizedTask = normalizeTask(task);
+
+			const item = document.createElement('div');
+			item.className = 'bg-gray-50 border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 card-hover';
+			item.setAttribute('data-task-item', '1');
+            if (normalizedTask.uniqueid) {
+                item.dataset.uniqueid = String(normalizedTask.uniqueid);
+            }
+
+			const info = document.createElement('div');
+
+			const lineSummary = document.createElement('div');
+			lineSummary.className = 'text-sm text-gray-500';
+			lineSummary.textContent = `日期：${normalizedTask.date || 'year-mon-day'}, 场地: ${formatCourt(normalizedTask.court)}, 时间: ${formatTimeRange(normalizedTask.time)}`;
+
+         const lineText = document.createElement('div');
+            lineText.className = 'font-medium mt-1';
+            lineText.textContent = normalizedTask.message || normalizedTask.text || '';
+
+			info.appendChild(lineSummary);
+			info.appendChild(lineText);
+
+            if (isFinished) {
+                const statusWrap = document.createElement('div');
+                statusWrap.className = 'mt-2 flex items-center gap-2 flex-wrap';
+
+                const statusBadge = document.createElement('span');
+                const success = normalizedTask.resultStatus === 'success';
+                statusBadge.className = success
+                    ? 'inline-block px-2 py-0.5 text-xs rounded border border-green-500 text-green-700 bg-green-50'
+                    : 'inline-block px-2 py-0.5 text-xs rounded border border-red-500 text-red-700 bg-red-50';
+                statusBadge.textContent = success ? 'Success' : 'Failed';
+
+                const infoText = document.createElement('span');
+                infoText.className = 'text-sm text-gray-600';
+                infoText.textContent = normalizedTask.resultInfo || '-';
+
+                statusWrap.appendChild(statusBadge);
+                statusWrap.appendChild(infoText);
+                info.appendChild(statusWrap);
+            }
+
+			const actions = document.createElement('div');
+			actions.className = 'flex gap-2';
+
+            if (!isFinished) {
+                const delBtn = document.createElement('button');
+                delBtn.type = 'button';
+                delBtn.className = 'text-red-500 hover:text-red-600 text-sm';
+                delBtn.innerHTML = '<i class="fa fa-trash mr-1"></i>删除';
+                delBtn.dataset.action = 'delete';
+                actions.appendChild(delBtn);
+            }
+
+			item.appendChild(info);
+          if (!isFinished) {
+                item.appendChild(actions);
+            }
+
+			return item;
+		}
+
+		function renderTaskList(container, tasks, isFinished) {
+			container.innerHTML = '';
+
+			if (!Array.isArray(tasks) || tasks.length === 0) {
+				return;
+			}
+
+			tasks.forEach(function (task) {
+				container.appendChild(createTaskItem(task, isFinished));
+			});
+		}
+
+        function getPanelElements(panel) {
+            if (panel === 'finished') {
+                return {
+                    list: finishedList,
+                    info: pageInfoFinished,
+                    prev: prevFinishedBtn,
+                    next: nextFinishedBtn
+                };
+            }
+
+            return {
+                list: addedList,
+                info: pageInfoAdded,
+                prev: prevAddedBtn,
+                next: nextAddedBtn
+            };
+        }
+
+        function getPageCount(panel) {
+            const state = pagerState[panel];
+            if (!state || state.tasks.length === 0) return 1;
+            return Math.max(1, Math.ceil(state.tasks.length / state.pageSize));
+        }
+
+        function renderPanel(panel) {
+            const state = pagerState[panel];
+            const elements = getPanelElements(panel);
+            const pageCount = getPageCount(panel);
+
+            if (state.page > pageCount) {
+                state.page = pageCount;
+            }
+            if (state.page < 1) {
+                state.page = 1;
+            }
+
+            const start = (state.page - 1) * state.pageSize;
+            const end = start + state.pageSize;
+            const pagedTasks = state.tasks.slice(start, end);
+
+            renderTaskList(elements.list, pagedTasks, panel === 'finished');
+            elements.info.textContent = `第 ${state.page} / ${pageCount} 页`;
+            elements.prev.disabled = state.page <= 1;
+            elements.next.disabled = state.page >= pageCount;
+           renderStatusGrid();
+        }
+
+        function parseCourtNumber(courtValue) {
+            const value = String(courtValue || '');
+            const match = value.match(/\d+/);
+            if (!match) return -1;
+            const num = Number(match[0]);
+            if (Number.isNaN(num) || num < 1 || num > 12) return -1;
+            return num;
+        }
+
+        function parseTimeIndex(timeValue) {
+            const formatted = formatTimeRange(timeValue);
+            const match = formatted.match(/^(\d{1,2}):00-/);
+            if (!match) return -1;
+            const hour = Number(match[1]);
+            if (Number.isNaN(hour) || hour < 8 || hour > 21) return -1;
+            return hour - 8;
+        }
+
+        function statusToCellClass(value) {
+            const status = Number(value);
+            if (status === 1) return 'cell-success';
+            if (status === 2) return 'cell-teaching';
+            if (status === 3) return 'cell-timeout';
+            if (status === 0) return 'cell-failed';
+            return 'cell-empty';
+        }
+
+        function normalizeGridTable(tableData) {
+            if (Array.isArray(tableData)) {
+                return tableData;
+            }
+
+            if (tableData && Array.isArray(tableData.data)) {
+                return tableData.data.map(function (court) {
+                    if (Array.isArray(court)) {
+                        return court;
+                    }
+                    return gridTimeSlots.map(function (_, idx) {
+                        const hour = 8 + idx;
+                        return Number(court && court[`time${hour}`] != null ? court[`time${hour}`] : 0);
+                    });
+                });
+            }
+
+            return [];
+        }
+
+        function getCellClass(task, panel) {
+            if (panel === 'finished') {
+                return task.resultStatus === 'success' ? 'cell-success' : 'cell-failed';
+            }
+            return 'cell-waiting';
+        }
+
+        function renderStatusGrid() {
+            const selectedDate = dateInput.value || getTodayDate();
+          statusGridDate.textContent = `(${selectedDate})`;
+            statusGridLastUpdate.textContent = `Last Update：${getNowDateTimeString()}`;
+
+            const map = Array.from({ length: 12 }, function () {
+                return Array.from({ length: gridTimeSlots.length }, function () {
+                    return 'cell-empty';
+                });
+            });
+
+            if (gridOverdate) {
+                for (let court = 0; court < 12; court++) {
+                    for (let col = 0; col < gridTimeSlots.length; col++) {
+                        map[court][col] = 'cell-success';
+                    }
+                }
+            } else {
+                for (let court = 0; court < 12; court++) {
+                    const courtRow = Array.isArray(gridTableData[court]) ? gridTableData[court] : [];
+                    for (let col = 0; col < gridTimeSlots.length; col++) {
+                        map[court][col] = statusToCellClass(courtRow[col]);
+                    }
+                }
+            }
+
+            let html = '<thead><tr><th>场地\\时间</th>';
+            gridTimeSlots.forEach(function (slot) {
+                html += `<th>${slot}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+
+            for (let court = 1; court <= 12; court++) {
+                html += `<tr><th>场地${court}</th>`;
+                for (let col = 0; col < gridTimeSlots.length; col++) {
+                    const cellClass = map[court - 1][col];
+                    const clickClass = cellClass === 'cell-success' ? ' cursor-pointer' : '';
+                    html += `<td class="${cellClass}${clickClass}" data-court="${court}" data-time="${8 + col}"></td>`;
+                }
+                html += '</tr>';
+            }
+
+            html += '</tbody>';
+            statusGrid.innerHTML = html;
+        }
+
+        function setPanelTasks(panel, tasks) {
+            pagerState[panel].tasks = Array.isArray(tasks) ? tasks : [];
+            pagerState[panel].page = 1;
+            renderPanel(panel);
+        }
+
+        function changePage(panel, delta) {
+            pagerState[panel].page += delta;
+            renderPanel(panel);
+        }
+
+        function handleStatusGridClick(event) {
+            const cell = event.target.closest('td');
+            if (!cell || !statusGrid.contains(cell)) {
+                return;
+            }
+
+            if (!cell.classList.contains('cell-success')) {
+                return;
+            }
+
+            const court = String(cell.dataset.court || '');
+            const time = String(cell.dataset.time || '');
+            const selectedDate = dateInput.value || getTodayDate();
+
+            if (!court || !time) {
+                return;
+            }
+
+            dateInput.value = selectedDate;
+            numSelect.value = court;
+            textSelect.value = time;
+            setFormMessage('info', `已选择: ${selectedDate}, Court-${court} ${time}:00-${Number(time) + 1}:00`);
+        }
+
+		function handleListAction(event) {
+			const actionBtn = event.target.closest('button[data-action]');
+			if (!actionBtn) return;
+
+			const action = actionBtn.dataset.action;
+			if (action === 'delete') {
+				removeItem(actionBtn);
+			}
+		}
+
+		async function addItem() {
+			const dateVal = dateInput.value;
+			const courtVal = numSelect.value;
+			const timeVal = textSelect.value;
+
+			if (!courtVal || !timeVal) {
+				setFormMessage('error', '请添加任务');
+				return;
+			}
+
+			setButtonLoading(addBtn, true, '提交中...');
+
+			try {
+              const result = await postToServer(API_ENDPOINTS.addTask, {
+					date: dateVal,
+					court: courtVal,
+					time: timeVal
+				});
+
+                const taskFromServer = result.task || result.data || {
+					date: dateVal,
+					court: courtVal,
+					time: timeVal,
+					text: ''
+				};
+
+              if (!taskFromServer.message) {
+                    taskFromServer.message = result.message || '';
+                }
+
+             pagerState.added.tasks.unshift(taskFromServer);
+                renderPanel('added');
+				setFormMessage('success', result.message || '任务添加成功');
+
+				dateInput.value = getTodayDate();
+				numSelect.value = '';
+				textSelect.value = '';
+
+                await Promise.allSettled([
+                    refreshGridOnly(),
+                    refreshTasks('added'),
+                    refreshTasks('finished')
+                ]);
+			} catch (error) {
+				setFormMessage('error', error.message || '提交失败，请稍后重试');
+			} finally {
+				setButtonLoading(addBtn, false, '提交中...');
+			}
+		}
+
+		async function refreshTasks(panel) {
+			const targetBtn = panel === 'added' ? refreshAddedBtn : refreshFinishedBtn;
+            const requestType = panel === 'added' ? 'processing' : 'finished';
+
+			setButtonLoading(targetBtn, true, '刷新中...');
+
+			try {
+				const result = await postToServer(API_ENDPOINTS.refreshTasks, {
+                   type: requestType
+				});
+
+               const tasks = Array.isArray(result.data)
+                    ? result.data
+                    : Array.isArray(result.tasks)
+                        ? result.tasks
+                        : [];
+
+                const responseType = (result.type || '').toLowerCase();
+                const targetPanel = responseType === 'finished' ? 'finished' : panel;
+                setPanelTasks(targetPanel, tasks);
+                setPanelMessage(targetPanel, 'success', result.message || '刷新成功');
+			} catch (error) {
+             setPanelMessage(panel, 'error', error.message || '刷新失败，请稍后重试');
+			} finally {
+				setButtonLoading(targetBtn, false, '刷新中...');
+			}
+		}
+
+       async function removeItem(el) {
+			const item = el.closest('[data-task-item]');
+            if (!item) {
+                return;
+            }
+
+            const uniqueid = item.dataset.uniqueid;
+            if (!uniqueid) {
+                setPanelMessage('added', 'error', '任务缺少 uniqueid，无法删除');
+                return;
+            }
+
+            setButtonLoading(el, true, '删除中...');
+            try {
+                const result = await postToServer(API_ENDPOINTS.deleteTask, {
+                    uniqueid: uniqueid
+                });
+              pagerState.added.tasks = pagerState.added.tasks.filter(function (task) {
+                    return String(task.uniqueid || task.uniqueId || task.id || '') !== String(uniqueid);
+                });
+                pagerState.finished.tasks = pagerState.finished.tasks.filter(function (task) {
+                    return String(task.uniqueid || task.uniqueId || task.id || '') !== String(uniqueid);
+                });
+                renderPanel('added');
+                renderPanel('finished');
+                setPanelMessage('added', 'success', result.message || '删除成功');
+            } catch (error) {
+                setPanelMessage('added', 'error', error.message || '删除失败，请稍后重试');
+            } finally {
+                setButtonLoading(el, false, '删除中...');
+            }
+		}
+
+        async function initializeTaskPanels() {
+            await refreshGridOnly();
+            await Promise.allSettled([
+                refreshTasks('added'),
+                refreshTasks('finished')
+            ]);
+        }
+
+        async function refreshGridOnly() {
+            const result = await postToServer(API_ENDPOINTS.refreshGrid, {
+             type: 'table',
+                date: dateInput.value || getTodayDate()
+            });
+            const data = result && result.data && typeof result.data === 'object' ? result.data : {};
+            gridOverdate = Boolean(data.overdate);
+            gridTableData = normalizeGridTable(data.table);
+            renderStatusGrid();
+        }
+
+        renderPanel('added');
+        renderPanel('finished');
+       initializeTaskPanels();
+	</script>
+</body>
+</html>
