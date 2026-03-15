@@ -374,7 +374,24 @@ void HttpServer::HandleClient(SOCKET clientSocket) {
 	}
 
 	const std::string rawRequest(buffer.data(), static_cast<size_t>(recvLen));
+   auto escapePacketForLog = [](std::string_view packet) {
+		std::string escaped;
+		escaped.reserve(packet.size());
+		for (char ch : packet) {
+			if (ch == '\r') {
+				escaped += "\\r";
+			}
+			else if (ch == '\n') {
+				escaped += "\\n";
+			}
+			else {
+				escaped.push_back(ch);
+			}
+		}
+		return escaped;
+	};
 	const HttpRequest request = ParseRequest(rawRequest);
+    logger_.Info("Request body: " + escapePacketForLog(request.body));
 	HttpResponse response(clientSocket);
 	logger_.Info("Request: method=" + request.method + " path=" + request.path);
 

@@ -1,37 +1,44 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-	<meta charset="UTF-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>任务管理面板</title>
-	<script src="./tailwindcss.min.js"></script>
-	<link href="./font-awesome.min.css" rel="stylesheet">
-	<style>
-		* {
-			box-sizing: border-box;
-		}
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="./icon.png" type="image/png" />
+    <title>任务管理面板</title>
+    <script src="./tailwindcss.min.js"></script>
+    <link href="./font-awesome.min.css" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
 
-		.card-hover {
-			transition: all 0.25s ease;
-		}
+        .card-hover {
+            transition: all 0.25s ease;
+        }
 
-		.card-hover:hover {
-			transform: translateY(-3px);
-			box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);
-		}
+            .card-hover:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);
+            }
 
-		input[type="date"] {
-			min-height: 38px;
-		}
+        input[type="date"] {
+            min-height: 38px;
+        }
 
-		select {
-			min-height: 38px;
-		}
+        select {
+            min-height: 38px;
+        }
 
        .layout-top {
             display: grid;
-            grid-template-columns: minmax(240px, 315px) 1fr;
+            grid-template-columns: 1fr;
             gap: 12px;
+        }
+
+        @media (min-width: 1024px) {
+            .layout-top {
+                grid-template-columns: minmax(240px, 315px) 1fr;
+            }
         }
 
         .grid-wrap {
@@ -76,6 +83,10 @@
             background: #9ca3af;
         }
 
+        .cell-future {
+            background: #facc15;
+        }
+
         .cell-failed {
             background: #F56C6C;
         }
@@ -86,7 +97,7 @@
             -ms-user-select: none;
             user-select: none;
         }
-	</style>
+    </style>
 </head>
 <body class="bg-gray-50 min-h-screen m-0 p-0">
    <div class="max-w-7xl mx-auto px-4 py-6">
@@ -245,7 +256,6 @@
         const nextFinishedBtn = document.getElementById('next-finished-btn');
 		const formMessage = document.getElementById('form-message');
         let gridTableData = [];
-        let gridOverdate = false;
 
         document.addEventListener('copy', function (event) {
             event.preventDefault();
@@ -324,6 +334,20 @@
             return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
         }
 
+        function getWeekdayText(dateText) {
+            if (!dateText) {
+                return '';
+            }
+
+            const dateObj = new Date(`${dateText}T00:00:00`);
+            if (Number.isNaN(dateObj.getTime())) {
+                return '';
+            }
+
+            const weekDays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+            return weekDays[dateObj.getDay()] || '';
+        }
+
 		function formatCourt(court) {
 			if (!court) return 'Court-xx';
 			const raw = String(court);
@@ -360,6 +384,8 @@
                 setButtonLoading(refreshGridBtn, false, '刷新中...');
             }
         });
+        numSelect.addEventListener('change', updateSelectableOptions);
+        textSelect.addEventListener('change', updateSelectableOptions);
 
         const gridTimeSlots = Array.from({ length: 14 }, function (_, i) {
             const start = 8 + i;
@@ -623,8 +649,103 @@
             if (status === 1) return 'cell-success';
             if (status === 2) return 'cell-teaching';
             if (status === 3) return 'cell-timeout';
+         if (status === 4) return 'cell-future';
             if (status === 0) return 'cell-failed';
             return 'cell-empty';
+        }
+
+        function isReservable(courtValue, timeValue) {
+            const court = Number(courtValue);
+            const time = Number(timeValue);
+            if (!court || !time) {
+                return false;
+            }
+
+            const courtIndex = court - 1;
+            const timeIndex = time - 8;
+            if (courtIndex < 0 || courtIndex >= 12 || timeIndex < 0 || timeIndex >= gridTimeSlots.length) {
+                return false;
+            }
+
+            const courtRow = Array.isArray(gridTableData[courtIndex]) ? gridTableData[courtIndex] : [];
+            return statusToCellClass(courtRow[timeIndex]) === 'cell-success';
+        }
+
+        function hasAnyAvailableTime(courtValue) {
+            for (let time = 8; time <= 21; time++) {
+                if (isReservable(courtValue, time)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function hasAnyAvailableCourt(timeValue) {
+            for (let court = 1; court <= 12; court++) {
+                if (isReservable(court, timeValue)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function updateSelectableOptions() {
+            const selectedCourt = numSelect.value;
+            const selectedTime = textSelect.value;
+
+            Array.from(numSelect.options).forEach(function (option) {
+                if (!option.value) {
+                    option.disabled = false;
+                    return;
+                }
+
+                option.disabled = selectedTime
+                    ? !isReservable(option.value, selectedTime)
+                    : !hasAnyAvailableTime(option.value);
+            });
+
+            Array.from(textSelect.options).forEach(function (option) {
+                if (!option.value) {
+                    option.disabled = false;
+                    return;
+                }
+
+                option.disabled = selectedCourt
+                    ? !isReservable(selectedCourt, option.value)
+                    : !hasAnyAvailableCourt(option.value);
+            });
+
+            const selectedCourtOption = numSelect.options[numSelect.selectedIndex];
+            if (selectedCourtOption && selectedCourtOption.value && selectedCourtOption.disabled) {
+                numSelect.value = '';
+            }
+
+            const selectedTimeOption = textSelect.options[textSelect.selectedIndex];
+            if (selectedTimeOption && selectedTimeOption.value && selectedTimeOption.disabled) {
+                textSelect.value = '';
+            }
+
+            updateSubmitAvailability();
+        }
+
+        function updateSubmitAvailability() {
+            const court = Number(numSelect.value);
+            const time = Number(textSelect.value);
+
+            if (!court || !time) {
+                addBtn.disabled = true;
+                addBtn.classList.add('opacity-60', 'cursor-not-allowed');
+                return;
+            }
+
+           const canSubmit = isReservable(court, time);
+
+            addBtn.disabled = !canSubmit;
+            if (canSubmit) {
+                addBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+            } else {
+                addBtn.classList.add('opacity-60', 'cursor-not-allowed');
+            }
         }
 
         function normalizeGridTable(tableData) {
@@ -656,7 +777,8 @@
 
         function renderStatusGrid() {
             const selectedDate = dateInput.value || getTodayDate();
-          statusGridDate.textContent = `(${selectedDate})`;
+         const weekText = getWeekdayText(selectedDate);
+            statusGridDate.textContent = weekText ? `(${selectedDate} ${weekText})` : `(${selectedDate})`;
             statusGridLastUpdate.textContent = `Last Update：${getNowDateTimeString()}`;
 
             const map = Array.from({ length: 12 }, function () {
@@ -665,18 +787,10 @@
                 });
             });
 
-            if (gridOverdate) {
-                for (let court = 0; court < 12; court++) {
-                    for (let col = 0; col < gridTimeSlots.length; col++) {
-                        map[court][col] = 'cell-success';
-                    }
-                }
-            } else {
-                for (let court = 0; court < 12; court++) {
-                    const courtRow = Array.isArray(gridTableData[court]) ? gridTableData[court] : [];
-                    for (let col = 0; col < gridTimeSlots.length; col++) {
-                        map[court][col] = statusToCellClass(courtRow[col]);
-                    }
+         for (let court = 0; court < 12; court++) {
+                const courtRow = Array.isArray(gridTableData[court]) ? gridTableData[court] : [];
+                for (let col = 0; col < gridTimeSlots.length; col++) {
+                    map[court][col] = statusToCellClass(courtRow[col]);
                 }
             }
 
@@ -698,6 +812,7 @@
 
             html += '</tbody>';
             statusGrid.innerHTML = html;
+          updateSelectableOptions();
         }
 
         function setPanelTasks(panel, tasks) {
@@ -732,6 +847,7 @@
             dateInput.value = selectedDate;
             numSelect.value = court;
             textSelect.value = time;
+          updateSelectableOptions();
             setFormMessage('info', `已选择: ${selectedDate}, Court-${court} ${time}:00-${Number(time) + 1}:00`);
         }
 
@@ -754,6 +870,11 @@
 				setFormMessage('error', '请添加任务');
 				return;
 			}
+
+            if (addBtn.disabled) {
+                setFormMessage('error', '所选场地时间不可预约');
+                return;
+            }
 
 			setButtonLoading(addBtn, true, '提交中...');
 
@@ -792,6 +913,7 @@
 				setFormMessage('error', error.message || '提交失败，请稍后重试');
 			} finally {
 				setButtonLoading(addBtn, false, '提交中...');
+               updateSubmitAvailability();
 			}
 		}
 
@@ -870,13 +992,13 @@
                 date: dateInput.value || getTodayDate()
             });
             const data = result && result.data && typeof result.data === 'object' ? result.data : {};
-            gridOverdate = Boolean(data.overdate);
             gridTableData = normalizeGridTable(data.table);
             renderStatusGrid();
         }
 
         renderPanel('added');
         renderPanel('finished');
+       updateSelectableOptions();
        initializeTaskPanels();
 	</script>
 </body>

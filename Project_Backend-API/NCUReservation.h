@@ -69,6 +69,10 @@ private:
 	std::mutex processingQueueMutex;
 	std::mutex finishedQueueMutex;
 	std::mutex tokenMutex;
+	std::mutex processingFileMutex;
+	std::mutex finishedFileMutex;
+	std::fstream processingQueueFile;
+	std::fstream finishedQueueFile;
 public:
 	explicit ReservationManager(Logger& logger)
 		: logger_(logger) {
@@ -83,6 +87,18 @@ public:
 		if (otherProcessThread_.joinable()) {
 			otherProcessThread_.join();
 		}
+	   {
+			std::scoped_lock lock(processingFileMutex);
+			if (processingQueueFile.is_open()) {
+				processingQueueFile.close();
+			}
+		}
+		{
+			std::scoped_lock lock(finishedFileMutex);
+			if (finishedQueueFile.is_open()) {
+				finishedQueueFile.close();
+			}
+		}
 	}
 
 	bool addReservation(std::string date, int court, int time, std::string& info, std::string& uniqueid) {
@@ -96,11 +112,38 @@ public:
 			info = "Date is in the past.";
 			return false;
 		}
+		std::string tokenSnapshot;
+		{
+			std::scoped_lock lock(tokenMutex);
+			tokenSnapshot = token;
+		}
+		if (!CheckToken(tokenSnapshot, username)) tokenSnapshot = GenerateToken(username, password);
+		{
+			std::scoped_lock lock(tokenMutex);
+			token = tokenSnapshot;
+		}
+		Json::Value table = GenerateCourtByDate(date, tokenSnapshot);
+		if (table[court - 1][time - 8].asString() == "0") {
+			info = "Court is reserved.";
+			return false;
+		}
+		else if (table[court - 1][time - 8].asString() == "2") {
+			info = "Court is used for teaching.";
+			return false;
+		}
+		else if (table[court - 1][time - 8].asString() == "3") {
+			info = "Court is overtime.";
+			return false;
+		}
+		uniqueid = Sha256::Hex(date + std::to_string(court) + std::to_string(time) + std::to_string(rand() % 10000));
+		if (CheckReservationExistence(uniqueid)) {
+			info = "You have already reserved this court at this time.";
+			return false;
+		}
+
 
 		if (CurrentTime().GetHour() >= 12) reserveDate += 2;
 		else reserveDate += 1;
-
-		uniqueid = Sha256::Hex(date + std::to_string(court) + std::to_string(time) + std::to_string(rand() % 10000));
 
 		if (dateRead <= reserveDate) {
 			std::scoped_lock lock(pendingReservationMutex_);
@@ -111,6 +154,7 @@ public:
 			time_t reserveTime = StringToTimeStamp((dateRead - 2).Print()) + 12 * 3600 + 2;
 			std::scoped_lock lock(pendingReservationMutex_);
 			pendingReservations_.push({ date, court, time, reserveTime, uniqueid });
+			writeProcessingFile({ date, court, time, reserveTime, uniqueid });
 			info = "Reservation will be made at " + (dateRead - 2).Print() + " 12:00:00.";
 		}
 		pendingReservationCv_.notify_one();
@@ -122,6 +166,7 @@ public:
 		for (auto it = ReservationProcessingQueue.begin(); it != ReservationProcessingQueue.end(); ++it) {
 			if (it->uniqueid == uniqueid) {
 				ReservationProcessingQueue.erase(it);
+				removeProcessingFile(uniqueid);
 				return true;
 			}
 		}
@@ -133,6 +178,11 @@ public:
 		{
 			std::scoped_lock lock(tokenMutex);
 			tokenSnapshot = token;
+		}
+		if (!CheckToken(tokenSnapshot, username)) tokenSnapshot = GenerateToken(username, password);
+		{
+			std::scoped_lock lock(tokenMutex);
+			token = tokenSnapshot;
 		}
 		table = GenerateCourtByDate(date, tokenSnapshot);
 		return true;
@@ -154,7 +204,10 @@ public:
 			logger_.Warning("Reservation manager has already started.");
 			return;
 		}
-
+		processingQueueFile.open("processingQueue", std::ios::in | std::ios::out | std::ios::app);
+		finishedQueueFile.open("finishedQueue", std::ios::in | std::ios::out | std::ios::app);
+		readProcessingFile();
+		readFinishedFile();
 		logger_.Info("Reservation manager is starting background workers.");
 		reserveProcessThread_ = std::thread(&ReservationManager::processReservation, this);
 		otherProcessThread_ = std::thread(&ReservationManager::processOther, this);
@@ -163,7 +216,7 @@ public:
 
 private:
 	void processOther() {
-	  Logger::SetCurrentThreadName("Thread-Other");
+		Logger::SetCurrentThreadName("Thread-Other");
 		std::string tempToken;
 		{
 			std::scoped_lock lock(tokenMutex);
@@ -197,6 +250,15 @@ private:
 					rResult.reservationInfo.time,
 					rResult.reservationInfo.reserveTime
 				});
+				addFinishedFile({
+					rResult.status,
+					rResult.info,
+					rResult.reservationInfo.date,
+					rResult.reservationInfo.court,
+					rResult.reservationInfo.time,
+					rResult.reservationInfo.reserveTime
+				});
+				removeProcessingFile(rResult.reservationInfo.uniqueid);
 			};
 
 			auto getTokenSnapshot = [this]() -> std::string {
@@ -304,6 +366,122 @@ private:
 	}
 
 private:
+	bool readProcessingFile() {
+	   std::scoped_lock fileLock(processingFileMutex);
+		if (!processingQueueFile.is_open()) return false;
+		processingQueueFile.clear();
+		processingQueueFile.seekg(0, std::ios::beg);
+		std::string line;
+		while (std::getline(processingQueueFile, line)) {
+			std::istringstream iss(line);
+			ReservationInfo rInfo;
+			if (!(iss >> rInfo.uniqueid >> rInfo.date >> rInfo.court >> rInfo.time >> rInfo.reserveTime)) {
+				logger_.Warning("Failed to parse processing queue line: " + line);
+				continue;
+			}
+			std::scoped_lock queueLock(processingQueueMutex);
+			auto it = std::upper_bound(
+				ReservationProcessingQueue.begin(),
+				ReservationProcessingQueue.end(),
+				rInfo.reserveTime,
+				[](time_t t, const ReservationInfo& r) {
+					return t < r.reserveTime;
+				}
+			);
+			ReservationProcessingQueue.insert(it, std::move(rInfo));
+		}
+		processingQueueFile.clear();
+		processingQueueFile.seekp(0, std::ios::end);
+		return true;
+	}
+	bool writeProcessingFile(const ReservationInfo& rInfo) {
+		std::scoped_lock lock(processingFileMutex);
+		if (!processingQueueFile.is_open()) return false;
+		processingQueueFile.clear();
+		processingQueueFile.seekp(0, std::ios::end);
+
+		std::ostringstream lineOss;
+		lineOss << rInfo.uniqueid << " " << rInfo.date << " " << rInfo.court << " " << rInfo.time << " " << rInfo.reserveTime;
+		const std::string line = lineOss.str();
+
+		processingQueueFile << line << "\n";
+		processingQueueFile.flush();
+		logger_.Info("Write file [processingQueue]: " + line);
+		return true;
+	}
+	bool removeProcessingFile(const std::string& uniqueid) {
+		std::scoped_lock lock(processingFileMutex);
+		if (!processingQueueFile.is_open()) return false;
+		std::vector<ReservationInfo> tempQueue;
+		std::string line;
+	   processingQueueFile.clear();
+		processingQueueFile.seekg(0, std::ios::beg);
+		while (std::getline(processingQueueFile, line)) {
+			std::istringstream iss(line);
+			ReservationInfo rInfo;
+			if (!(iss >> rInfo.uniqueid >> rInfo.date >> rInfo.court >> rInfo.time >> rInfo.reserveTime)) {
+				logger_.Warning("Failed to parse processing queue line for deletion: " + line);
+				continue;
+			}
+			if (rInfo.uniqueid != uniqueid) {
+				tempQueue.push_back(std::move(rInfo));
+			}
+		}
+		processingQueueFile.close();
+		processingQueueFile.open("processingQueue", std::ios::trunc | std::ios::out);
+	   if (!processingQueueFile.is_open()) return false;
+
+		for (const auto& r : tempQueue) {
+			std::ostringstream lineOss;
+			lineOss << r.uniqueid << " " << r.date << " " << r.court << " " << r.time << " " << r.reserveTime;
+			const std::string writeLine = lineOss.str();
+
+			processingQueueFile << writeLine << "\n";
+			logger_.Info("Write file [processingQueue]: " + writeLine);
+		}
+
+		processingQueueFile.flush();
+		processingQueueFile.close();
+		processingQueueFile.open("processingQueue", std::ios::in | std::ios::out | std::ios::app);
+		if (!processingQueueFile.is_open()) return false;
+		return true;
+	}
+	bool addFinishedFile(const OverdateReservationInfo& rInfo) {
+		std::scoped_lock lock(finishedFileMutex);
+		if (!finishedQueueFile.is_open()) return false;
+		finishedQueueFile.clear();
+		finishedQueueFile.seekp(0, std::ios::end);
+
+		std::ostringstream lineOss;
+		lineOss << rInfo.status << " " << rInfo.date << " " << rInfo.court << " " << rInfo.time << " " << rInfo.reserveTime << " " << rInfo.info;
+		const std::string line = lineOss.str();
+
+		finishedQueueFile << line << "\n";
+		finishedQueueFile.flush();
+		logger_.Info("Write file [finishedQueue]: " + line);
+		return true;
+	}
+	bool readFinishedFile() {
+	 std::scoped_lock fileLock(finishedFileMutex);
+		if (!finishedQueueFile.is_open()) return false;
+		finishedQueueFile.clear();
+		finishedQueueFile.seekg(0, std::ios::beg);
+		std::string line;
+		while (std::getline(finishedQueueFile, line)) {
+			std::istringstream iss(line);
+			OverdateReservationInfo rInfo;
+			if (!(iss >> rInfo.status >> rInfo.date >> rInfo.court >> rInfo.time >> rInfo.reserveTime)) {
+				logger_.Warning("Failed to parse finished queue line: " + line);
+				continue;
+			}
+		   std::getline(iss >> std::ws, rInfo.info);
+			std::scoped_lock queueLock(finishedQueueMutex);
+			ReservationFinishQueue.push_back(std::move(rInfo));
+		}
+		finishedQueueFile.clear();
+		finishedQueueFile.seekp(0, std::ios::end);
+		return true;
+	}
 	std::string GenerateToken(std::string username, std::string password) {
 		std::string NCU_user_token;
 
@@ -486,7 +664,13 @@ private:
 		}
 		return rResult;
 	}
-
+	bool CheckReservationExistence(std::string uniqueid) {
+		std::scoped_lock lock(processingQueueMutex);
+		for (const auto& r : ReservationProcessingQueue) {
+			if (r.uniqueid == uniqueid) return true;
+		}
+		return false;
+	}
 	Json::Value GenerateCourtByDate(std::string date, std::string token) {
 		httplib::SSLClient client("ndyy.ncu.edu.cn");
 		httplib::Result result;
@@ -508,6 +692,20 @@ private:
 			}
 		}
 
+		{
+			std::scoped_lock queueLock(processingQueueMutex);
+			for (const auto& r : ReservationProcessingQueue) {
+				if (r.date != date) {
+					continue;
+				}
+				const int courtIndex = r.court - 1;
+				const int timeIndex = r.time - 8;
+				if (courtIndex >= 0 && courtIndex < resultJson.size() &&
+					timeIndex >= 0 && resultJson[courtIndex].isArray() && timeIndex < resultJson[courtIndex].size()) {
+					resultJson[courtIndex][timeIndex] = 4;
+				}
+			}
+		}
 		return resultJson;
 	}
 };

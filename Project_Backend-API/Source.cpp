@@ -80,13 +80,9 @@ int main() {
 					responseJson["success"] = false;
 					responseJson["message"] = "Invalid date.";
 				}
-				else if (date - 2 > CurrentTime().GetFormattedTimeDate()) {
-					responseJson["data"]["overdate"] = true;
-				}
 				else {
 					Json::Value table;
 					if (reservation.getReservationTable(date.Print(), table)) {
-						responseJson["data"]["overdate"] = false;
 						responseJson["data"]["table"] = table;
 					}
 					else {
@@ -97,7 +93,7 @@ int main() {
 			}
 			else {
 				responseJson["success"] = false;
-				responseJson["message"] = "Invalid type.";
+				responseJson["message"] = "Invalid type: " + requestJson["type"].asString();
 			}
 			res.SendJson(Json::FastWriter().write(responseJson));
 		});

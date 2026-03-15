@@ -143,8 +143,10 @@
     <Text Include="server.log" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="finishedQueue" />
     <None Include="font-awesome.min.css" />
     <None Include="index.html" />
+    <None Include="processingQueue" />
     <None Include="tailwindcss.min.js" />
   </ItemGroup>
   <ItemGroup>
@@ -155,6 +157,9 @@
     <ClInclude Include="Logger.h" />
     <ClInclude Include="NCUReservation.h" />
     <ClInclude Include="sha256.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="icon.png" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

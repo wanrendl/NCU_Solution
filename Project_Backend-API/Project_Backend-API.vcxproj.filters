@@ -40,8 +40,18 @@
     <None Include="index.html">
       <Filter>Resource</Filter>
     </None>
-    <None Include="tailwindcss.min.js" />
-    <None Include="font-awesome.min.css" />
+    <None Include="processingQueue">
+      <Filter>Resource</Filter>
+    </None>
+    <None Include="font-awesome.min.css">
+      <Filter>Resource</Filter>
+    </None>
+    <None Include="tailwindcss.min.js">
+      <Filter>Resource</Filter>
+    </None>
+    <None Include="finishedQueue">
+      <Filter>Resource</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="HTTPBackend.h">
@@ -65,5 +75,10 @@
     <ClInclude Include="sha256.h">
       <Filter>Header</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="icon.png">
+      <Filter>Resource</Filter>
+    </Image>
   </ItemGroup>
 </Project>
