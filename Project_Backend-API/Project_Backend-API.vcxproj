@@ -140,13 +140,16 @@
     <ClCompile Include="Source.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <Text Include="CMakeLists.txt" />
     <Text Include="server.log" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="config.json" />
     <None Include="finishedQueue" />
     <None Include="font-awesome.min.css" />
     <None Include="index.html" />
     <None Include="processingQueue" />
+    <None Include="README-linux.md" />
     <None Include="tailwindcss.min.js" />
   </ItemGroup>
   <ItemGroup>

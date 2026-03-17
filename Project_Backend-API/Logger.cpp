@@ -49,7 +49,13 @@ std::string Logger::BuildLine(Level level, std::string_view message) {
 	const auto now = std::chrono::system_clock::now();
 	const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
 	std::tm tmValue{};
+
+#ifdef _WIN32
 	localtime_s(&tmValue, &nowTime);
+#else
+	localtime_r(&nowTime, &tmValue);
+#endif
+
 	const std::string threadName = GetThreadName();
 
 	std::ostringstream oss;

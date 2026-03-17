@@ -1,7 +1,9 @@
 ﻿#ifndef _NCU_RESERVATION_H_
 #define _NCU_RESERVATION_H_
 
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
 #define CPPHTTPLIB_OPENSSL_SUPPORT
+#endif
 
 #include "basic.h"
 #include "httplib.h"
@@ -50,8 +52,8 @@ const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/
 
 class ReservationManager {
 private:
-	const std::string username = "***";
-	const std::string password = "***";
+	const std::string username = "5716125061";
+	const std::string password = "qaqveQ-3xyzty-vudqut";
 private:
 	Logger& logger_;
 private:
@@ -99,6 +101,10 @@ public:
 				finishedQueueFile.close();
 			}
 		}
+	}
+
+	void enableAutoPay() {
+		//to be continued...
 	}
 
 	bool addReservation(std::string date, int court, int time, std::string& info, std::string& uniqueid) {

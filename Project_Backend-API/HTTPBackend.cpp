@@ -9,9 +9,82 @@
 #include <stdexcept>
 #include <utility>
 
-#pragma comment(lib, "ws2_32.lib")
+#ifndef _WIN32
+#include <cerrno>
+#endif
 
-HttpServer::HttpResponse::HttpResponse(SOCKET clientSocket) : clientSocket_(clientSocket) {}
+#ifdef _WIN32
+#pragma comment(lib, "ws2_32.lib")
+#endif
+
+namespace {
+	void CloseSocketHandle(SocketHandle socketHandle) {
+		if (socketHandle == kInvalidSocket) {
+			return;
+		}
+#ifdef _WIN32
+		closesocket(socketHandle);
+#else
+		close(socketHandle);
+#endif
+	}
+
+	int GetSocketLastError() {
+#ifdef _WIN32
+		return WSAGetLastError();
+#else
+		return errno;
+#endif
+	}
+
+	std::string ToLowerAscii(std::string_view text) {
+		std::string result(text);
+		std::transform(result.begin(), result.end(), result.begin(), [](unsigned char ch) {
+			return static_cast<char>(std::tolower(ch));
+		});
+		return result;
+	}
+
+	bool TryGetHeaderValue(std::string_view headers, std::string_view key, std::string& value) {
+		const std::string lowerHeaders = ToLowerAscii(headers);
+		const std::string searchKey = ToLowerAscii(key) + ":";
+
+		const size_t keyPos = lowerHeaders.find(searchKey);
+		if (keyPos == std::string::npos) {
+			return false;
+		}
+
+		size_t valueStart = keyPos + searchKey.size();
+		while (valueStart < headers.size() && (headers[valueStart] == ' ' || headers[valueStart] == '\t')) {
+			++valueStart;
+		}
+
+		size_t valueEnd = headers.find("\r\n", valueStart);
+		if (valueEnd == std::string::npos) {
+			valueEnd = headers.size();
+		}
+
+		value.assign(headers.substr(valueStart, valueEnd - valueStart));
+		return true;
+	}
+
+	bool TryGetContentLength(std::string_view headers, size_t& contentLength) {
+		std::string value;
+		if (!TryGetHeaderValue(headers, "Content-Length", value)) {
+			return false;
+		}
+
+		try {
+			contentLength = static_cast<size_t>(std::stoull(value));
+			return true;
+		}
+		catch (...) {
+			return false;
+		}
+	}
+}
+
+HttpServer::HttpResponse::HttpResponse(SocketHandle clientSocket) : clientSocket_(clientSocket) {}
 
 const std::unordered_map<int, std::string>& HttpServer::HttpResponse::GetAllHttpStatusDescriptions() {
 	static const std::unordered_map<int, std::string> statusMap = {
@@ -148,22 +221,34 @@ void HttpServer::Start() {
 		throw std::runtime_error("Server is already running");
 	}
 
+#ifdef _WIN32
 	WSADATA wsaData{};
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
 		throw std::runtime_error("WSAStartup failed");
 	}
+#endif
 
-	listenSocket_ = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-	if (listenSocket_ == INVALID_SOCKET) {
+ listenSocket_ = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+	if (listenSocket_ == kInvalidSocket) {
+#ifdef _WIN32
 		WSACleanup();
+#endif
 		throw std::runtime_error("socket() failed");
 	}
 
-	int off = 0;
-	if (setsockopt(listenSocket_, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&off), sizeof(off)) == SOCKET_ERROR) {
-		closesocket(listenSocket_);
-		listenSocket_ = INVALID_SOCKET;
+    int off = 0;
+	int setSockResult = 0;
+#ifdef _WIN32
+	setSockResult = setsockopt(listenSocket_, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&off), sizeof(off));
+#else
+	setSockResult = setsockopt(listenSocket_, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
+#endif
+    if (setSockResult < 0) {
+		CloseSocketHandle(listenSocket_);
+		listenSocket_ = kInvalidSocket;
+#ifdef _WIN32
 		WSACleanup();
+#endif
 		throw std::runtime_error("setsockopt(IPV6_V6ONLY) failed");
 	}
 
@@ -172,17 +257,21 @@ void HttpServer::Start() {
 	serverAddr.sin6_port = htons(port_);
 	serverAddr.sin6_addr = in6addr_any;
 
-	if (bind(listenSocket_, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) == SOCKET_ERROR) {
-		closesocket(listenSocket_);
-		listenSocket_ = INVALID_SOCKET;
+    if (bind(listenSocket_, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) < 0) {
+		CloseSocketHandle(listenSocket_);
+		listenSocket_ = kInvalidSocket;
+#ifdef _WIN32
 		WSACleanup();
+#endif
 		throw std::runtime_error("bind() failed");
 	}
 
-	if (listen(listenSocket_, SOMAXCONN) == SOCKET_ERROR) {
-		closesocket(listenSocket_);
-		listenSocket_ = INVALID_SOCKET;
+    if (listen(listenSocket_, SOMAXCONN) < 0) {
+		CloseSocketHandle(listenSocket_);
+		listenSocket_ = kInvalidSocket;
+#ifdef _WIN32
 		WSACleanup();
+#endif
 		throw std::runtime_error("listen() failed");
 	}
 
@@ -193,11 +282,15 @@ void HttpServer::Start() {
 
 	while (running_) {
 		sockaddr_storage clientAddr{};
+        #ifdef _WIN32
 		int clientLen = sizeof(clientAddr);
-		const SOCKET clientSocket = accept(listenSocket_, reinterpret_cast<sockaddr*>(&clientAddr), &clientLen);
-		if (clientSocket == INVALID_SOCKET) {
+		#else
+		socklen_t clientLen = sizeof(clientAddr);
+		#endif
+		const SocketHandle clientSocket = accept(listenSocket_, reinterpret_cast<sockaddr*>(&clientAddr), &clientLen);
+		if (clientSocket == kInvalidSocket) {
 			if (running_) {
-				logger_.Error("accept() failed: " + std::to_string(WSAGetLastError()));
+             logger_.Error("accept() failed: " + std::to_string(GetSocketLastError()));
 			}
 			continue;
 		}
@@ -217,9 +310,9 @@ void HttpServer::Stop() {
 
 	running_ = false;
 	logger_.Info("HTTP server stopping");
-	if (listenSocket_ != INVALID_SOCKET) {
-		closesocket(listenSocket_);
-		listenSocket_ = INVALID_SOCKET;
+  if (listenSocket_ != kInvalidSocket) {
+		CloseSocketHandle(listenSocket_);
+		listenSocket_ = kInvalidSocket;
 	}
 
 	{
@@ -238,12 +331,15 @@ void HttpServer::Stop() {
 	{
 		std::scoped_lock lock(queueMutex_);
 		while (!clientQueue_.empty()) {
-			closesocket(clientQueue_.front());
+          CloseSocketHandle(clientQueue_.front());
 			clientQueue_.pop();
 		}
 	}
 
+
+#ifdef _WIN32
 	WSACleanup();
+#endif
 	logger_.Info("HTTP server stopped");
 }
 
@@ -260,7 +356,7 @@ void HttpServer::StartWorkers() {
 
 void HttpServer::WorkerLoop() {
 	for (;;) {
-		SOCKET clientSocket = INVALID_SOCKET;
+       SocketHandle clientSocket = kInvalidSocket;
 		{
 			std::unique_lock<std::mutex> lock(queueMutex_);
 			queueCv_.wait(lock, [this]() {
@@ -276,7 +372,7 @@ void HttpServer::WorkerLoop() {
 		}
 
 		HandleClient(clientSocket);
-		closesocket(clientSocket);
+      CloseSocketHandle(clientSocket);
 	}
 }
 
@@ -365,15 +461,58 @@ bool HttpServer::TryServeLocalFile(const std::string& requestPath, HttpResponse&
 	return true;
 }
 
-void HttpServer::HandleClient(SOCKET clientSocket) {
+void HttpServer::HandleClient(SocketHandle clientSocket) {
 	std::array<char, 2048> buffer{};
-	const int recvLen = recv(clientSocket, buffer.data(), static_cast<int>(buffer.size() - 1), 0);
-	if (recvLen <= 0) {
-		logger_.Warning("recv() failed or empty request");
+  std::string rawRequest;
+	rawRequest.reserve(buffer.size() * 2);
+
+	size_t headerEndPos = std::string::npos;
+	size_t expectedRequestLength = std::string::npos;
+	bool sentContinue = false;
+
+	for (;;) {
+		const int recvLen = recv(clientSocket, buffer.data(), static_cast<int>(buffer.size()), 0);
+		if (recvLen <= 0) {
+			if (rawRequest.empty()) {
+				logger_.Warning("recv() failed or empty request");
+			}
+			break;
+		}
+
+		rawRequest.append(buffer.data(), static_cast<size_t>(recvLen));
+
+		if (headerEndPos == std::string::npos) {
+			headerEndPos = rawRequest.find("\r\n\r\n");
+			if (headerEndPos != std::string::npos) {
+				const std::string_view headers(rawRequest.data(), headerEndPos + 4);
+
+				size_t contentLength = 0;
+				if (TryGetContentLength(headers, contentLength)) {
+					expectedRequestLength = headerEndPos + 4 + contentLength;
+				}
+				else {
+					expectedRequestLength = headerEndPos + 4;
+				}
+
+				std::string expectHeader;
+				if (!sentContinue && TryGetHeaderValue(headers, "Expect", expectHeader) && ToLowerAscii(expectHeader) == "100-continue") {
+					constexpr std::string_view continueResponse = "HTTP/1.1 100 Continue\r\n\r\n";
+					send(clientSocket, continueResponse.data(), static_cast<int>(continueResponse.size()), 0);
+					sentContinue = true;
+				}
+			}
+		}
+
+		if (expectedRequestLength != std::string::npos && rawRequest.size() >= expectedRequestLength) {
+			rawRequest.resize(expectedRequestLength);
+			break;
+		}
+	}
+
+	if (rawRequest.empty()) {
 		return;
 	}
 
-	const std::string rawRequest(buffer.data(), static_cast<size_t>(recvLen));
    auto escapePacketForLog = [](std::string_view packet) {
 		std::string escaped;
 		escaped.reserve(packet.size());

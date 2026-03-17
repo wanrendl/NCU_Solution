@@ -1,5 +1,7 @@
 #include "basic.h"
 
+#include <thread>
+
 std::string ReadStrngFromFile(std::string fileName) {
 	std::ifstream file(fileName, std::ios::binary);
 	std::stringstream sStream;
@@ -24,16 +26,21 @@ std::string ParseStringPos(std::string str, size_t pos1, size_t pos2) {
 void DelayPrint(std::string s, int ms = 50) {
 	for (auto& it : s) {
 		std::cout << it;
-		Sleep(ms);
+      std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 	}
 }
 
 void ColorfulPrint(std::string s, WORD wAttributes) {
+  #ifdef _WIN32
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 
 	SetConsoleTextAttribute(hConsole, wAttributes);
 	std::cout << s;
 	SetConsoleTextAttribute(hConsole, FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE); // 重置为默认颜色
+   #else
+	(void)wAttributes;
+	std::cout << s;
+	#endif
 }
 
 CurrentTime::CurrentTime() {

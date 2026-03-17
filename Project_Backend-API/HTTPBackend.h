@@ -14,8 +14,24 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
+#ifdef _WIN32
+using SocketHandle = SOCKET;
+constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
+#else
+using SocketHandle = int;
+constexpr SocketHandle kInvalidSocket = -1;
+#endif
 
 class HttpServer {
 public:
@@ -29,7 +45,7 @@ public:
 
 	class HttpResponse {
 	public:
-		explicit HttpResponse(SOCKET clientSocket);
+     explicit HttpResponse(SocketHandle clientSocket);
 
 		[[nodiscard]] static const std::unordered_map<int, std::string>& GetAllHttpStatusDescriptions();
 
@@ -47,7 +63,7 @@ public:
 		[[nodiscard]] static std::string GetStatusText(int statusCode);
 
 	private:
-		SOCKET clientSocket_{ INVALID_SOCKET };
+     SocketHandle clientSocket_{ kInvalidSocket };
 		bool sent_{ false };
 	};
 
@@ -67,7 +83,7 @@ private:
 	[[nodiscard]] static std::string Trim(std::string_view text);
 	[[nodiscard]] static HttpRequest ParseRequest(const std::string& rawRequest);
 	[[nodiscard]] static bool TryServeLocalFile(const std::string& requestPath, HttpResponse& response);
-	void HandleClient(SOCKET clientSocket);
+ void HandleClient(SocketHandle clientSocket);
 
 private:
 	unsigned short port_;
@@ -75,12 +91,12 @@ private:
 	std::unordered_map<std::string, RouteHandler> routes_;
 	std::mutex stateMutex_;
 	std::vector<std::thread> workers_;
-	std::queue<SOCKET> clientQueue_;
+    std::queue<SocketHandle> clientQueue_;
 	std::mutex queueMutex_;
 	std::condition_variable queueCv_;
 	bool stopping_{ false };
 	std::atomic<bool> running_{ false };
-	SOCKET listenSocket_{ INVALID_SOCKET };
+ SocketHandle listenSocket_{ kInvalidSocket };
 	Logger& logger_;
 };
 

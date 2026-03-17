@@ -115,25 +115,34 @@ int main() {
 			res.SendJson(Json::FastWriter().write(responseJson));
 		});
 
-		//server.On("/api/hello", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
-		//	res.SendJson("{\"message\":\"hello\",\"path\":\"" + req.path + "\"}");
-		//});
+		auto handleAutoPayStatus = [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value config = readJsonFile("config.json");
+			Json::Value responseJson;
+			responseJson["success"] = true;
+			responseJson["autopay"] = config.isObject() && config.isMember("autopay")
+				? config["autopay"].asBool()
+				: false;
+			res.SendJson(Json::FastWriter().write(responseJson));
+		};
 
-		//server.On("/api/echo", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
-		//	res.SendText("method=" + req.method + "\npath=" + req.rawPath + "\nbody=" + req.body);
-		//});
+		auto handleAutoPayChange = [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			Json::Value config = readJsonFile("config.json");
+			const bool change = requestJson.isObject() && requestJson.isMember("change")
+				? requestJson["change"].asBool()
+				: false;
+			config["autopay"] = change;
+			writeJsonFile("config.json", config);
 
-		//server.On("/api/file", [](const HttpServer::HttpRequest&, HttpServer::HttpResponse& res) {
-		//	res.SendFile("index.html");
-		//});
+			Json::Value responseJson;
+			responseJson["success"] = true;
+			responseJson["autopay"] = config["autopay"].asBool();
+			res.SendJson(Json::FastWriter().write(responseJson));
+		};
 
-		//server.On("/api/http-codes", [](const HttpServer::HttpRequest&, HttpServer::HttpResponse& res) {
-		//	std::ostringstream out;
-		//	for (const auto& [code, desc] : HttpServer::HttpResponse::GetAllHttpStatusDescriptions()) {
-		//		out << code << " " << desc << "\n";
-		//	}
-		//	res.SendText(out.str());
-		//});
+		server.On("/api/tasks/autopay/status", handleAutoPayStatus);
+		server.On("/api/tasks/autopay/change", handleAutoPayChange);
+		server.On("/api//api/tasks/autopay/change", handleAutoPayChange);
 
 		server.Start();
 	}

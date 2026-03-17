@@ -6,8 +6,13 @@
 #include <iostream>
 #include <sstream>
 #include <vector>
-#include <Windows.h>
 #include <iomanip>
+
+#ifdef _WIN32
+#include <Windows.h>
+#else
+using WORD = unsigned short;
+#endif
 
 template<typename T>
 static bool isIn(T content, std::vector<T> vec) {
