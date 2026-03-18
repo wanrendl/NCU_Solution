@@ -3,6 +3,8 @@
 #include "NCUReservation.h"
 #include "json.h"
 
+std::string Version = "v20260318-180000"
+
 int main() {
 	try {
 		Logger logger;
