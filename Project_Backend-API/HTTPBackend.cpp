@@ -11,6 +11,7 @@
 
 #ifndef _WIN32
 #include <cerrno>
+#include <csignal>
 #endif
 
 #ifdef _WIN32
@@ -18,6 +19,14 @@
 #endif
 
 namespace {
+ int SendSocketData(SocketHandle socketHandle, const char* data, size_t length) {
+#ifdef _WIN32
+		return send(socketHandle, data, static_cast<int>(length), 0);
+#else
+		return send(socketHandle, data, length, MSG_NOSIGNAL);
+#endif
+	}
+
 	void CloseSocketHandle(SocketHandle socketHandle) {
 		if (socketHandle == kInvalidSocket) {
 			return;
@@ -159,7 +168,7 @@ bool HttpServer::HttpResponse::HasSent() const noexcept {
 void HttpServer::HttpResponse::SendAll(const char* data, size_t length) {
 	size_t total = 0;
 	while (total < length) {
-		const int sentBytes = send(clientSocket_, data + total, static_cast<int>(length - total), 0);
+       const int sentBytes = SendSocketData(clientSocket_, data + total, length - total);
 		if (sentBytes <= 0) {
 			break;
 		}
@@ -168,19 +177,39 @@ void HttpServer::HttpResponse::SendAll(const char* data, size_t length) {
 }
 
 std::string HttpServer::HttpResponse::GuessContentType(const std::string& filePath) {
-	static constexpr std::array<std::pair<std::string_view, std::string_view>, 9> contentTypes = {
+	static constexpr std::array<std::pair<std::string_view, std::string_view>, 29> contentTypes = {
 		std::pair{ ".html", "text/html; charset=utf-8" },
 		std::pair{ ".htm", "text/html; charset=utf-8" },
 		std::pair{ ".txt", "text/plain; charset=utf-8" },
+		std::pair{ ".xml", "application/xml; charset=utf-8" },
+		std::pair{ ".csv", "text/csv; charset=utf-8" },
 		std::pair{ ".json", "application/json; charset=utf-8" },
 		std::pair{ ".css", "text/css; charset=utf-8" },
 		std::pair{ ".js", "application/javascript; charset=utf-8" },
+		std::pair{ ".mjs", "application/javascript; charset=utf-8" },
+		std::pair{ ".map", "application/json; charset=utf-8" },
+		std::pair{ ".pdf", "application/pdf" },
+		std::pair{ ".zip", "application/zip" },
+		std::pair{ ".wasm", "application/wasm" },
+		std::pair{ ".ico", "image/x-icon" },
 		std::pair{ ".png", "image/png" },
+		std::pair{ ".webp", "image/webp" },
 		std::pair{ ".jpg", "image/jpeg" },
-		std::pair{ ".jpeg", "image/jpeg" }
+		std::pair{ ".jpeg", "image/jpeg" },
+		std::pair{ ".bmp", "image/bmp" },
+		std::pair{ ".avif", "image/avif" },
+		std::pair{ ".mp3", "audio/mpeg" },
+		std::pair{ ".wav", "audio/wav" },
+		std::pair{ ".ogg", "audio/ogg" },
+		std::pair{ ".mp4", "video/mp4" },
+		std::pair{ ".webm", "video/webm" },
+		std::pair{ ".woff", "font/woff" },
+		std::pair{ ".woff2", "font/woff2" },
+		std::pair{ ".ttf", "font/ttf" },
+		std::pair{ ".otf", "font/otf" }
 	};
 
-	const std::string extension = std::filesystem::path(filePath).extension().string();
+	const std::string extension = ToLowerAscii(std::filesystem::path(filePath).extension().string());
 	for (const auto& [ext, mime] : contentTypes) {
 		if (extension == ext) {
 			return std::string(mime);
@@ -226,9 +255,11 @@ void HttpServer::Start() {
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
 		throw std::runtime_error("WSAStartup failed");
 	}
+#else
+	signal(SIGPIPE, SIG_IGN);
 #endif
 
- listenSocket_ = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+listenSocket_ = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
 	if (listenSocket_ == kInvalidSocket) {
 #ifdef _WIN32
 		WSACleanup();
@@ -236,14 +267,14 @@ void HttpServer::Start() {
 		throw std::runtime_error("socket() failed");
 	}
 
-    int off = 0;
+	int off = 0;
 	int setSockResult = 0;
 #ifdef _WIN32
 	setSockResult = setsockopt(listenSocket_, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&off), sizeof(off));
 #else
 	setSockResult = setsockopt(listenSocket_, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
 #endif
-    if (setSockResult < 0) {
+	if (setSockResult < 0) {
 		CloseSocketHandle(listenSocket_);
 		listenSocket_ = kInvalidSocket;
 #ifdef _WIN32
@@ -257,7 +288,7 @@ void HttpServer::Start() {
 	serverAddr.sin6_port = htons(port_);
 	serverAddr.sin6_addr = in6addr_any;
 
-    if (bind(listenSocket_, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) < 0) {
+	if (bind(listenSocket_, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) < 0) {
 		CloseSocketHandle(listenSocket_);
 		listenSocket_ = kInvalidSocket;
 #ifdef _WIN32
@@ -266,7 +297,7 @@ void HttpServer::Start() {
 		throw std::runtime_error("bind() failed");
 	}
 
-    if (listen(listenSocket_, SOMAXCONN) < 0) {
+	if (listen(listenSocket_, SOMAXCONN) < 0) {
 		CloseSocketHandle(listenSocket_);
 		listenSocket_ = kInvalidSocket;
 #ifdef _WIN32
@@ -282,7 +313,7 @@ void HttpServer::Start() {
 
 	while (running_) {
 		sockaddr_storage clientAddr{};
-        #ifdef _WIN32
+		#ifdef _WIN32
 		int clientLen = sizeof(clientAddr);
 		#else
 		socklen_t clientLen = sizeof(clientAddr);
@@ -290,7 +321,7 @@ void HttpServer::Start() {
 		const SocketHandle clientSocket = accept(listenSocket_, reinterpret_cast<sockaddr*>(&clientAddr), &clientLen);
 		if (clientSocket == kInvalidSocket) {
 			if (running_) {
-             logger_.Error("accept() failed: " + std::to_string(GetSocketLastError()));
+				logger_.Error("accept() failed: " + std::to_string(GetSocketLastError()));
 			}
 			continue;
 		}
@@ -310,7 +341,7 @@ void HttpServer::Stop() {
 
 	running_ = false;
 	logger_.Info("HTTP server stopping");
-  if (listenSocket_ != kInvalidSocket) {
+	if (listenSocket_ != kInvalidSocket) {
 		CloseSocketHandle(listenSocket_);
 		listenSocket_ = kInvalidSocket;
 	}
@@ -331,7 +362,7 @@ void HttpServer::Stop() {
 	{
 		std::scoped_lock lock(queueMutex_);
 		while (!clientQueue_.empty()) {
-          CloseSocketHandle(clientQueue_.front());
+			CloseSocketHandle(clientQueue_.front());
 			clientQueue_.pop();
 		}
 	}
@@ -356,7 +387,7 @@ void HttpServer::StartWorkers() {
 
 void HttpServer::WorkerLoop() {
 	for (;;) {
-       SocketHandle clientSocket = kInvalidSocket;
+	   SocketHandle clientSocket = kInvalidSocket;
 		{
 			std::unique_lock<std::mutex> lock(queueMutex_);
 			queueCv_.wait(lock, [this]() {
@@ -372,7 +403,7 @@ void HttpServer::WorkerLoop() {
 		}
 
 		HandleClient(clientSocket);
-      CloseSocketHandle(clientSocket);
+		CloseSocketHandle(clientSocket);
 	}
 }
 
@@ -463,7 +494,7 @@ bool HttpServer::TryServeLocalFile(const std::string& requestPath, HttpResponse&
 
 void HttpServer::HandleClient(SocketHandle clientSocket) {
 	std::array<char, 2048> buffer{};
-  std::string rawRequest;
+	std::string rawRequest;
 	rawRequest.reserve(buffer.size() * 2);
 
 	size_t headerEndPos = std::string::npos;
@@ -497,7 +528,7 @@ void HttpServer::HandleClient(SocketHandle clientSocket) {
 				std::string expectHeader;
 				if (!sentContinue && TryGetHeaderValue(headers, "Expect", expectHeader) && ToLowerAscii(expectHeader) == "100-continue") {
 					constexpr std::string_view continueResponse = "HTTP/1.1 100 Continue\r\n\r\n";
-					send(clientSocket, continueResponse.data(), static_cast<int>(continueResponse.size()), 0);
+                  SendSocketData(clientSocket, continueResponse.data(), continueResponse.size());
 					sentContinue = true;
 				}
 			}
@@ -513,7 +544,7 @@ void HttpServer::HandleClient(SocketHandle clientSocket) {
 		return;
 	}
 
-   auto escapePacketForLog = [](std::string_view packet) {
+	auto escapePacketForLog = [](std::string_view packet) {
 		std::string escaped;
 		escaped.reserve(packet.size());
 		for (char ch : packet) {
@@ -530,7 +561,7 @@ void HttpServer::HandleClient(SocketHandle clientSocket) {
 		return escaped;
 	};
 	const HttpRequest request = ParseRequest(rawRequest);
-    logger_.Info("Request body: " + escapePacketForLog(request.body));
+	logger_.Info("Request body: " + escapePacketForLog(request.body));
 	HttpResponse response(clientSocket);
 	logger_.Info("Request: method=" + request.method + " path=" + request.path);
 

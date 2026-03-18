@@ -17,7 +17,6 @@
 #include <future>
 #include <iomanip>
 #include <iostream>
-#include <list>
 #include <mutex>
 #include <queue>
 #include <sstream>
