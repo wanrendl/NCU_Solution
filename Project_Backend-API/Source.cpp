@@ -3,7 +3,21 @@
 #include "NCUReservation.h"
 #include "json.h"
 
-std::string Version = "v20260318-180000"
+std::string Version = "v20260318-180000";
+
+/*
+g++ -std=c++20 -O2 -DCPPHTTPLIB_OPENSSL_SUPPORT \
+	Source.cpp HTTPBackend.cpp Logger.cpp basic.cpp sha256.cpp \
+	-o Project_Backend-API \
+	$(pkg-config --cflags --libs jsoncpp) \
+	-lssl -lcrypto -lpthread
+
+nohup ./Project_Backend-API > backend.out 2>&1 &
+
+tail -f backend.out
+
+ps -ef | grep Project_Backend-API
+*/
 
 int main() {
 	try {

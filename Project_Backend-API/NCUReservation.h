@@ -60,8 +60,8 @@ const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/
 
 class ReservationManager {
 private:
-	const std::string username = "***";
-	const std::string password = "***";
+	const std::string username = "5716125061";
+	const std::string password = "qaqveQ-3xyzty-vudqut";
 private:
 	Logger& logger_;
 private:
