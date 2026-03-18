@@ -18,7 +18,6 @@ int main() {
 		server.On("/reservation", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			res.SendFile("index.html", "text/html");
 		});
-
 		server.On("/api/tasks/add", [&reservation](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value requestJson = ReadJsonFromString(req.body);
 			std::string date = requestJson["date"].asString();
@@ -91,6 +90,21 @@ int main() {
 					}
 				}
 			}
+			else if (requestJson["type"].asString() == "loginstat") {
+				if (requestJson["checktoken"].asBool() == true) reservation.checkTokenValidate();
+				loginInfo info;
+				reservation.getloginInfo(info);
+				
+				info.token.replace(info.token.begin() + 4, info.token.end() - 8, "**********"); // Mask token for security
+				info.username.replace(info.username.begin() + 2, info.username.end() - 4, std::string(info.username.size() - 6, '*')); // Mask username for security
+
+				responseJson["type"] = "loginstat";
+				responseJson["data"]["validate"] = info.validate;
+				responseJson["data"]["token"] = info.token;
+				responseJson["data"]["username"] = info.username;
+				responseJson["data"]["lastUpdateTime"] = info.lastUpdateTime;
+				responseJson["data"]["lastCheckTime"] = info.lastCheckTime;
+			}
 			else {
 				responseJson["success"] = false;
 				responseJson["message"] = "Invalid type: " + requestJson["type"].asString();
@@ -142,7 +156,6 @@ int main() {
 
 		server.On("/api/tasks/autopay/status", handleAutoPayStatus);
 		server.On("/api/tasks/autopay/change", handleAutoPayChange);
-		server.On("/api//api/tasks/autopay/change", handleAutoPayChange);
 
 		server.Start();
 	}

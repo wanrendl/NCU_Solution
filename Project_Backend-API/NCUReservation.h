@@ -48,6 +48,14 @@ struct ReservationResult {
 	ReservationInfo reservationInfo;
 };
 
+struct loginInfo {
+	bool validate;
+	std::string token;
+	std::string username;
+	time_t lastUpdateTime;
+	time_t lastCheckTime;
+};
+
 const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/login";
 
 class ReservationManager {
@@ -58,7 +66,9 @@ private:
 	Logger& logger_;
 private:
 	std::string token;
+	loginInfo currentloginInfo{ false, "", "", 0, 0 };
 	std::atomic<bool> generateToken{ false };
+	std::atomic<bool> tokenReady{ false };
 	std::atomic<bool> stopRequested_{ false };
 	std::atomic<bool> started_{ false };
 	std::queue<ReservationInfo> pendingReservations_;
@@ -73,6 +83,7 @@ private:
 	std::mutex tokenMutex;
 	std::mutex processingFileMutex;
 	std::mutex finishedFileMutex;
+	std::mutex loginInfoMutex;
 	std::fstream processingQueueFile;
 	std::fstream finishedQueueFile;
 public:
@@ -89,7 +100,7 @@ public:
 		if (otherProcessThread_.joinable()) {
 			otherProcessThread_.join();
 		}
-	   {
+		{
 			std::scoped_lock lock(processingFileMutex);
 			if (processingQueueFile.is_open()) {
 				processingQueueFile.close();
@@ -107,6 +118,26 @@ public:
 		//to be continued...
 	}
 
+	void checkTokenValidate() {
+		std::string tokenSnapshot;
+		{
+			std::scoped_lock lock(tokenMutex);
+			tokenSnapshot = token;
+		}
+		bool validity = CheckToken(tokenSnapshot, username);
+		if (!validity) {
+			logger_.Warning("Token is invalid during validation check. Requesting new token generation.");
+			generateToken.store(true);
+			while (!tokenReady.load()) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			}
+		} else {
+			std::scoped_lock lock(loginInfoMutex);
+			currentloginInfo.validate = validity;
+			currentloginInfo.lastCheckTime = time(nullptr);
+		}
+	}
+
 	bool addReservation(std::string date, int court, int time, std::string& info, std::string& uniqueid) {
 		DateCalculator dateRead = date;
 		DateCalculator reserveDate = CurrentTime().GetFormattedTimeDate();
@@ -119,15 +150,16 @@ public:
 			return false;
 		}
 		std::string tokenSnapshot;
+		
+		generateToken.store(true);
+		while (!tokenReady.load()) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
 		{
 			std::scoped_lock lock(tokenMutex);
 			tokenSnapshot = token;
 		}
-		if (!CheckToken(tokenSnapshot, username)) tokenSnapshot = GenerateToken(username, password);
-		{
-			std::scoped_lock lock(tokenMutex);
-			token = tokenSnapshot;
-		}
+
 		Json::Value table = GenerateCourtByDate(date, tokenSnapshot);
 		if (table[court - 1][time - 8].asString() == "0") {
 			info = "Court is reserved.";
@@ -181,14 +213,13 @@ public:
 
 	bool getReservationTable(std::string date, Json::Value& table) {
 		std::string tokenSnapshot;
+		generateToken.store(true);
+		while (!tokenReady.load()) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
 		{
 			std::scoped_lock lock(tokenMutex);
 			tokenSnapshot = token;
-		}
-		if (!CheckToken(tokenSnapshot, username)) tokenSnapshot = GenerateToken(username, password);
-		{
-			std::scoped_lock lock(tokenMutex);
-			token = tokenSnapshot;
 		}
 		table = GenerateCourtByDate(date, tokenSnapshot);
 		return true;
@@ -202,6 +233,13 @@ public:
 	std::vector<OverdateReservationInfo> getReservationFinishQueueSnapshot() {
 		std::scoped_lock lock(finishedQueueMutex);
 		return ReservationFinishQueue;
+	}
+
+	void getloginInfo(loginInfo& info) {
+		{
+			std::scoped_lock lock(loginInfoMutex);
+			info = currentloginInfo;
+		}
 	}
 
 	void begin() {
@@ -224,20 +262,37 @@ private:
 	void processOther() {
 		Logger::SetCurrentThreadName("Thread-Other");
 		std::string tempToken;
-		{
-			std::scoped_lock lock(tokenMutex);
-			tempToken = token;
-		}
+		bool checkResult = false;
+		loginInfo snapshotInfo;
 		while (!stopRequested_.load()) {
 			if (generateToken.load()) { // If token generation is requested
-				tempToken = GenerateToken(username, password);
-				{
-					std::scoped_lock lock(tokenMutex);
-					token = tempToken;
-				}
 				generateToken.store(false);
+
+				checkResult = CheckToken(token, username);
+				snapshotInfo.lastCheckTime = time(nullptr);
+
+				logger_.Info("Token check result: " + std::string(checkResult ? "valid" : "invalid") + ", token: " + token);
+
+				if (!checkResult) {
+					tempToken = GenerateToken(username, password);
+					snapshotInfo.lastUpdateTime = time(nullptr);
+					{
+						std::scoped_lock lock(tokenMutex);
+						token = tempToken;
+					}
+				}
+
+				snapshotInfo.validate = true;
+				snapshotInfo.token = tempToken;
+				snapshotInfo.username = username;
+				{
+					std::scoped_lock lock(loginInfoMutex);
+					currentloginInfo = snapshotInfo;
+				}
+
+				tokenReady.store(true);
 			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
 	}
 
@@ -293,14 +348,13 @@ private:
 				if (CurrentTime().GetSeconds() - lastCheckTime >= 600) { // Check token validity every 10 minutes
 					lastCheckTime = CurrentTime().GetSeconds();
 					std::string tempToken;
+					generateToken.store(true);
+					while (!tokenReady.load()) {
+						std::this_thread::sleep_for(std::chrono::milliseconds(10));
+					}
 					{
 						std::scoped_lock lock(tokenMutex);
 						tempToken = token;
-					}
-					if (tempToken.empty() || !CheckToken(tempToken, username)) tempToken = GenerateToken(username, password);
-					{
-						std::scoped_lock lock(tokenMutex);
-						token = tempToken;
 					}
 				}
 			}

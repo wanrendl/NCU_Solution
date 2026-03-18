@@ -180,6 +180,7 @@
                     <table id="status-grid" class="status-grid"></table>
                 </div>
             </div>
+
         </div>
 
 		<div class="bg-white rounded-xl shadow p-5 mb-6 card-hover">
@@ -229,6 +230,29 @@
                 <button id="next-finished-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">下一页</button>
             </div>
 		</div>
+
+        <div class="bg-white rounded-xl shadow p-5 mt-6 card-hover">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                    <i class="fa fa-user text-indigo-600 mr-1"></i>当前账号信息
+                    <span id="loginstat-validate" class="inline-block px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-600 bg-gray-100">未知</span>
+                </h2>
+                <div class="flex items-center gap-2">
+                    <button id="check-loginstat-btn" type="button" class="text-sm bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg transition">
+                        <i class="fa fa-check mr-1"></i>Check
+                    </button>
+                    <button id="refresh-loginstat-btn" type="button" class="text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg transition">
+                        <i class="fa fa-refresh mr-1"></i>刷新
+                    </button>
+                </div>
+            </div>
+            <div class="space-y-2 text-sm text-gray-700">
+                <div>Username: <span id="loginstat-username" class="font-medium text-gray-900">-</span></div>
+                <div>Token: <span id="loginstat-token" class="font-medium text-gray-900">-</span></div>
+                <div>Last Check Time: <span id="loginstat-last-check-time" class="font-medium text-gray-900">-</span></div>
+                <div>Last Update Time: <span id="loginstat-last-update-time" class="font-medium text-gray-900">-</span></div>
+            </div>
+        </div>
 	</div>
 
    <script>
@@ -265,6 +289,13 @@
        const prevFinishedBtn = document.getElementById('prev-finished-btn');
        const nextFinishedBtn = document.getElementById('next-finished-btn');
        const formMessage = document.getElementById('form-message');
+      const refreshLoginStatBtn = document.getElementById('refresh-loginstat-btn');
+        const checkLoginStatBtn = document.getElementById('check-loginstat-btn');
+        const loginStatValidate = document.getElementById('loginstat-validate');
+        const loginStatToken = document.getElementById('loginstat-token');
+        const loginStatUsername = document.getElementById('loginstat-username');
+        const loginStatLastCheckTime = document.getElementById('loginstat-last-check-time');
+        const loginStatLastUpdateTime = document.getElementById('loginstat-last-update-time');
        let gridTableData = [];
 
        // 禁止复制等操作（保留原样）
@@ -836,7 +867,87 @@
            await loadAutoPayStatus();
            await refreshGridOnly();
            await Promise.allSettled([refreshTasks('added'), refreshTasks('finished')]);
+            await refreshLoginStat(false);
        }
+
+        function setLoginValidateBadge(validate) {
+            loginStatValidate.classList.remove(
+                'border-gray-300', 'text-gray-600', 'bg-gray-100',
+                'border-green-500', 'text-green-700', 'bg-green-100',
+                'border-red-500', 'text-red-700', 'bg-red-100'
+            );
+            if (validate === true) {
+                loginStatValidate.classList.add('border-green-500', 'text-green-700', 'bg-green-100');
+                loginStatValidate.textContent = '可用';
+                return;
+            }
+            if (validate === false) {
+                loginStatValidate.classList.add('border-red-500', 'text-red-700', 'bg-red-100');
+                loginStatValidate.textContent = '不可用';
+                return;
+            }
+            loginStatValidate.classList.add('border-gray-300', 'text-gray-600', 'bg-gray-100');
+            loginStatValidate.textContent = '未知';
+        }
+
+        function formatTimestampToDateTime(rawValue) {
+            if (rawValue === undefined || rawValue === null || rawValue === '') return '-';
+
+            const valueText = String(rawValue).trim();
+            if (!valueText) return '-';
+
+            let timestamp = Number(valueText);
+            if (Number.isNaN(timestamp)) {
+                const parsed = new Date(valueText);
+                if (Number.isNaN(parsed.getTime())) return valueText;
+                timestamp = parsed.getTime();
+            }
+
+            if (timestamp > 0 && timestamp < 1000000000000) {
+                timestamp = timestamp * 1000;
+            }
+
+            const dateObj = new Date(timestamp);
+            if (Number.isNaN(dateObj.getTime())) return valueText;
+
+            const yyyy = dateObj.getFullYear();
+            const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+            const dd = String(dateObj.getDate()).padStart(2, '0');
+            const hh = String(dateObj.getHours()).padStart(2, '0');
+            const mi = String(dateObj.getMinutes()).padStart(2, '0');
+            const ss = String(dateObj.getSeconds()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+        }
+
+        function setLoginStatInfo(data) {
+            const token = data && data.token != null ? String(data.token) : '-';
+            const username = data && data.username != null ? String(data.username) : '-';
+            const lastCheckTimeRaw = data && data.lastCheckTime != null ? data.lastCheckTime : null;
+            const lastUpdateTimeRaw = data && data.lastUpdateTIme != null ? data.lastUpdateTIme : (data && data.lastUpdateTime != null ? data.lastUpdateTime : null);
+            loginStatToken.textContent = token;
+            loginStatUsername.textContent = username;
+            loginStatLastCheckTime.textContent = formatTimestampToDateTime(lastCheckTimeRaw);
+            loginStatLastUpdateTime.textContent = formatTimestampToDateTime(lastUpdateTimeRaw);
+            setLoginValidateBadge(data ? data.validate : undefined);
+        }
+
+        async function refreshLoginStat(checkToken) {
+            const targetBtn = checkToken ? checkLoginStatBtn : refreshLoginStatBtn;
+            setButtonLoading(targetBtn, true, checkToken ? '检查中...' : '刷新中...');
+            try {
+                const payload = { type: 'loginstat' };
+                if (checkToken) {
+                    payload.checktoken = true;
+                }
+                const result = await postToServer(API_ENDPOINTS.refreshTasks, payload);
+                const data = result && result.data && typeof result.data === 'object' ? result.data : {};
+                setLoginStatInfo(data);
+            } catch (error) {
+                setLoginValidateBadge(undefined);
+            } finally {
+                setButtonLoading(targetBtn, false, checkToken ? '检查中...' : '刷新中...');
+            }
+        }
 
        async function refreshGridOnly() {
            const result = await postToServer(API_ENDPOINTS.refreshGrid, {
@@ -877,6 +988,12 @@
                setButtonLoading(refreshGridBtn, false, '刷新中...');
            }
        });
+       refreshLoginStatBtn.addEventListener('click', function () {
+            refreshLoginStat(false);
+        });
+        checkLoginStatBtn.addEventListener('click', function () {
+            refreshLoginStat(true);
+        });
        autopaySwitch.addEventListener('change', changeAutoPayStatus);
 
        // 初始渲染
