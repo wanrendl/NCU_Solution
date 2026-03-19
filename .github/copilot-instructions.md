@@ -9,3 +9,4 @@
 - `ReservationManager` 的工作线程 `processOther` 和 `processReservation` 使用线程名称 `Thread-Other` 和 `Thread-Reservation`。
 - 在进行文件写入时，需要在日志中输出写入的文件名和写入内容。
 - 服务端日志仅记录请求的 body 部分，不记录完整原始请求包。
+- 在待支付接口 `/api/pending/delete` 和 `/api/pending/pay` 的请求体中，`uniqueid` 应直接发送为字符串，不使用数组包装。

@@ -3,7 +3,7 @@
 #include "NCUReservation.h"
 #include "json.h"
 
-std::string Version = "v20260318-180000";
+std::string Version = "v20260319-125400";
 
 /*
 g++ -std=c++20 -O2 -DCPPHTTPLIB_OPENSSL_SUPPORT \
@@ -29,7 +29,7 @@ int main() {
 		ReservationManager reservation(logger);
 		reservation.begin();
 
-		HttpServer server(8080, logger);
+		HttpServer server(8027, logger);
 
 		server.On("/reservation", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			res.SendFile("index.html", "text/html");
@@ -60,6 +60,19 @@ int main() {
 
 		server.On("/api/tasks/refresh", [&reservation](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value responseJson, requestJson = ReadJsonFromString(req.body);
+			auto maskMiddle = [](const std::string& input, size_t keepLeft, size_t keepRight, char maskChar = '*', size_t maskLength = 0) -> std::string {
+				if (input.empty()) {
+					return "";
+				}
+				if (input.size() <= keepLeft + keepRight) {
+					return std::string(input.size(), maskChar);
+				}
+				std::string masked = input;
+				for (size_t i = keepLeft; i < masked.size() - keepRight; ++i) {
+					masked[i] = maskChar;
+				}
+				return masked;
+			};
 			responseJson["success"] = true;
 			if (requestJson["type"].asString() == "processing") {
 				responseJson["type"] = "processing";
@@ -110,9 +123,9 @@ int main() {
 				if (requestJson["checktoken"].asBool() == true) reservation.checkTokenValidate();
 				loginInfo info;
 				reservation.getloginInfo(info);
-				
-				info.token.replace(info.token.begin() + 4, info.token.end() - 8, "**********"); // Mask token for security
-				info.username.replace(info.username.begin() + 2, info.username.end() - 4, std::string(info.username.size() - 6, '*')); // Mask username for security
+
+				info.token = info.token.substr(0, 4) + "**********" + info.token.substr(info.token.size() > 6 ? info.token.size() - 6 : 0);
+				info.username = maskMiddle(info.username, 1, 3);
 
 				responseJson["type"] = "loginstat";
 				responseJson["data"]["validate"] = info.validate;
@@ -120,6 +133,19 @@ int main() {
 				responseJson["data"]["username"] = info.username;
 				responseJson["data"]["lastUpdateTime"] = info.lastUpdateTime;
 				responseJson["data"]["lastCheckTime"] = info.lastCheckTime;
+			}
+			else if (requestJson["type"].asString() == "pendingpayment") {
+				responseJson["type"] = "pendingpayment";
+				const auto pendingPayment = reservation.getReservationPendingPayment();
+				for (const auto& [uniqueid, paymentInfo] : pendingPayment) {
+					Json::Value paymentJson;
+					paymentJson["date"] = paymentInfo.date;
+					paymentJson["court"] = paymentInfo.court;
+					paymentJson["time"] = paymentInfo.time;
+					paymentJson["reservationId"] = paymentInfo.reservationId;
+					paymentJson["uniqueid"] = uniqueid;
+					responseJson["data"].append(paymentJson);
+				}
 			}
 			else {
 				responseJson["success"] = false;
@@ -172,6 +198,27 @@ int main() {
 
 		server.On("/api/tasks/autopay/status", handleAutoPayStatus);
 		server.On("/api/tasks/autopay/change", handleAutoPayChange);
+
+		server.On("/api/pending/delete", [&reservation](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			std::string uniqueid = requestJson["uniqueid"].asString();
+
+			Json::Value responseJson;
+
+			if (reservation.removePendingPayment(uniqueid)) {
+				responseJson["success"] = true;
+				responseJson["message"] = "Pending payment: " + uniqueid + " deleted successfully.";
+			} else {
+				responseJson["success"] = false;
+				responseJson["message"] = "Failed to delete pending payment: " + uniqueid + ".";
+			}
+
+			res.SendJson(Json::FastWriter().write(responseJson));
+		});
+
+		server.On("/api/pending/pay", [&reservation](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+
+		});
 
 		server.Start();
 	}

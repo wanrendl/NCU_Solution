@@ -207,6 +207,30 @@
             </div>
 		</div>
 
+        <div class="bg-white rounded-xl shadow p-5 mb-6 card-hover">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-800 flex items-center">
+                    <i class="fa fa-credit-card text-emerald-600 mr-2"></i>待支付
+                </h2>
+                <span id="pending-message" class="text-sm text-gray-500 mr-2"></span>
+                <button id="refresh-pending-btn" type="button" class="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg transition">
+                    <i class="fa fa-refresh mr-1"></i>刷新
+                </button>
+            </div>
+            <div id="list-pending" class="space-y-3"></div>
+            <div class="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                <label for="page-size-pending" class="text-gray-600">每页显示</label>
+                <select id="page-size-pending" class="border border-gray-300 rounded px-2 py-1">
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                </select>
+                <span id="page-info-pending" class="text-gray-500">第 1 / 1 页</span>
+                <button id="prev-pending-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">上一页</button>
+                <button id="next-pending-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">下一页</button>
+            </div>
+        </div>
+
 		<div class="bg-white rounded-xl shadow p-5 card-hover">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-xl font-semibold text-gray-800 flex items-center">
@@ -260,6 +284,8 @@
            addTask: '/api/tasks/add',
            refreshTasks: '/api/tasks/refresh',
            deleteTask: '/api/tasks/delete',
+           deletePending: '/api/pending/delete',
+           payPending: '/api/pending/pay',
            refreshGrid: '/api/tasks/refresh',
            autopayStatus: '/api/tasks/autopay/status',
            autopayChange: '/api/tasks/autopay/change' // 修正
@@ -268,24 +294,31 @@
        const addBtn = document.getElementById('add-btn');
        const autopaySwitch = document.getElementById('autopay-switch');
        const refreshAddedBtn = document.getElementById('refresh-added-btn');
+       const refreshPendingBtn = document.getElementById('refresh-pending-btn');
        const refreshFinishedBtn = document.getElementById('refresh-finished-btn');
        const dateInput = document.getElementById('date');
        const numSelect = document.getElementById('num');
        const textSelect = document.getElementById('text');
        const addedList = document.getElementById('list-added');
+       const pendingList = document.getElementById('list-pending');
        const finishedList = document.getElementById('list-finished');
        const addedMessage = document.getElementById('added-message');
+       const pendingMessage = document.getElementById('pending-message');
        const finishedMessage = document.getElementById('finished-message');
        const statusGrid = document.getElementById('status-grid');
        const statusGridDate = document.getElementById('status-grid-date');
        const statusGridLastUpdate = document.getElementById('status-grid-last-update');
        const refreshGridBtn = document.getElementById('refresh-grid-btn');
        const pageSizeAdded = document.getElementById('page-size-added');
+       const pageSizePending = document.getElementById('page-size-pending');
        const pageSizeFinished = document.getElementById('page-size-finished');
        const pageInfoAdded = document.getElementById('page-info-added');
+       const pageInfoPending = document.getElementById('page-info-pending');
        const pageInfoFinished = document.getElementById('page-info-finished');
        const prevAddedBtn = document.getElementById('prev-added-btn');
        const nextAddedBtn = document.getElementById('next-added-btn');
+       const prevPendingBtn = document.getElementById('prev-pending-btn');
+       const nextPendingBtn = document.getElementById('next-pending-btn');
        const prevFinishedBtn = document.getElementById('prev-finished-btn');
        const nextFinishedBtn = document.getElementById('next-finished-btn');
        const formMessage = document.getElementById('form-message');
@@ -311,6 +344,7 @@
 
        const pagerState = {
            added: { tasks: [], page: 1, pageSize: Number(pageSizeAdded.value) },
+           pending: { tasks: [], page: 1, pageSize: Number(pageSizePending.value) },
            finished: { tasks: [], page: 1, pageSize: Number(pageSizeFinished.value) }
        };
 
@@ -458,7 +492,9 @@
        }
 
        function setPanelMessage(panel, type, text) {
-           const target = panel === 'finished' ? finishedMessage : addedMessage;
+           let target = addedMessage;
+           if (panel === 'pending') target = pendingMessage;
+           else if (panel === 'finished') target = finishedMessage;
            if (!target) return;
            target.classList.remove('text-gray-500', 'text-red-600', 'text-green-600');
            if (type === 'error') target.classList.add('text-red-600');
@@ -491,7 +527,7 @@
 
        function normalizeTask(task) {
            if (!task || typeof task !== 'object') {
-               return { date: getTodayDate(), court: '', time: '', text: '', message: '', uniqueid: '', resultStatus: '', resultInfo: '' };
+               return { date: getTodayDate(), court: '', time: '', text: '', message: '', uniqueid: '', resultStatus: '', resultInfo: '', reservationId: '' };
            }
            const responseData = task.response && task.response.data ? task.response.data : {};
            const resultStatus = String(responseData.status || task.status || '').toLowerCase();
@@ -503,13 +539,16 @@
                text: task.text || task.title || task.content || '',
                message: task.message || task.content || '',
                uniqueid: task.uniqueid || task.uniqueId || task.id || '',
+               reservationId: task.reservationId || task.reservationID || '',
                resultStatus: resultStatus,
                resultInfo: resultInfo
            };
        }
 
-       function createTaskItem(task, isFinished) {
+       function createTaskItem(task, panel) {
            const normalizedTask = normalizeTask(task);
+           const isFinished = panel === 'finished';
+           const isPending = panel === 'pending';
            const item = document.createElement('div');
            item.className = 'bg-gray-50 border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 card-hover';
            item.setAttribute('data-task-item', '1');
@@ -523,7 +562,11 @@
            lineSummary.textContent = `日期：${normalizedTask.date || 'year-mon-day'}, 场地: ${formatCourt(normalizedTask.court)}, 时间: ${formatTimeRange(normalizedTask.time)}`;
            const lineText = document.createElement('div');
            lineText.className = 'font-medium mt-1';
-           lineText.textContent = normalizedTask.message || normalizedTask.text || '';
+           if (isPending) {
+               lineText.textContent = `ReservationID: ${normalizedTask.reservationId || '-'}`;
+           } else {
+               lineText.textContent = normalizedTask.message || normalizedTask.text || '';
+           }
            info.appendChild(lineSummary);
            info.appendChild(lineText);
 
@@ -546,29 +589,50 @@
 
            const actions = document.createElement('div');
            actions.className = 'flex gap-2';
-           if (!isFinished) {
+           if (isPending) {
+               const payBtn = document.createElement('button');
+               payBtn.type = 'button';
+               payBtn.className = 'text-green-600 hover:text-green-700 text-sm';
+               payBtn.innerHTML = '<i class="fa fa-shopping-cart mr-1"></i>购买';
+               payBtn.dataset.action = 'pay';
+               payBtn.dataset.panel = 'pending';
+
                const delBtn = document.createElement('button');
                delBtn.type = 'button';
                delBtn.className = 'text-red-500 hover:text-red-600 text-sm';
                delBtn.innerHTML = '<i class="fa fa-trash mr-1"></i>删除';
                delBtn.dataset.action = 'delete';
+               delBtn.dataset.panel = 'pending';
+
+               actions.appendChild(payBtn);
+               actions.appendChild(delBtn);
+           } else if (!isFinished) {
+               const delBtn = document.createElement('button');
+               delBtn.type = 'button';
+               delBtn.className = 'text-red-500 hover:text-red-600 text-sm';
+               delBtn.innerHTML = '<i class="fa fa-trash mr-1"></i>删除';
+               delBtn.dataset.action = 'delete';
+               delBtn.dataset.panel = 'added';
                actions.appendChild(delBtn);
            }
 
            item.appendChild(info);
-           if (!isFinished) {
+           if (!isFinished || isPending) {
                item.appendChild(actions);
            }
            return item;
        }
 
-       function renderTaskList(container, tasks, isFinished) {
+       function renderTaskList(container, tasks, panel) {
            container.innerHTML = '';
            if (!Array.isArray(tasks) || tasks.length === 0) return;
-           tasks.forEach(task => container.appendChild(createTaskItem(task, isFinished)));
+           tasks.forEach(task => container.appendChild(createTaskItem(task, panel)));
        }
 
        function getPanelElements(panel) {
+           if (panel === 'pending') {
+               return { list: pendingList, info: pageInfoPending, prev: prevPendingBtn, next: nextPendingBtn };
+           }
            if (panel === 'finished') {
                return { list: finishedList, info: pageInfoFinished, prev: prevFinishedBtn, next: nextFinishedBtn };
            }
@@ -592,7 +656,7 @@
            const end = start + state.pageSize;
            const pagedTasks = state.tasks.slice(start, end);
 
-           renderTaskList(elements.list, pagedTasks, panel === 'finished');
+           renderTaskList(elements.list, pagedTasks, panel);
            elements.info.textContent = `第 ${state.page} / ${pageCount} 页`;
            elements.prev.disabled = state.page <= 1;
            elements.next.disabled = state.page >= pageCount;
@@ -776,6 +840,12 @@
            const actionBtn = event.target.closest('button[data-action]');
            if (!actionBtn) return;
            const action = actionBtn.dataset.action;
+           const panel = actionBtn.dataset.panel || 'added';
+           if (panel === 'pending') {
+               if (action === 'delete') removePendingItem(actionBtn);
+               else if (action === 'pay') payPendingItem(actionBtn);
+               return;
+           }
            if (action === 'delete') removeItem(actionBtn);
        }
 
@@ -812,6 +882,7 @@
                await Promise.allSettled([
                    refreshGridOnly(),
                    refreshTasks('added'),
+                   refreshTasks('pending'),
                    refreshTasks('finished')
                ]);
            } catch (error) {
@@ -823,14 +894,21 @@
        }
 
        async function refreshTasks(panel) {
-           const targetBtn = panel === 'added' ? refreshAddedBtn : refreshFinishedBtn;
-           const requestType = panel === 'added' ? 'processing' : 'finished';
+           const targetBtn = panel === 'added'
+               ? refreshAddedBtn
+               : (panel === 'pending' ? refreshPendingBtn : refreshFinishedBtn);
+           const requestType = panel === 'added'
+               ? 'processing'
+               : (panel === 'pending' ? 'pendingpayment' : 'finished');
            setButtonLoading(targetBtn, true, '刷新中...');
            try {
                const result = await postToServer(API_ENDPOINTS.refreshTasks, { type: requestType });
                const tasks = Array.isArray(result.data) ? result.data : (Array.isArray(result.tasks) ? result.tasks : []);
                const responseType = (result.type || '').toLowerCase();
-               const targetPanel = responseType === 'finished' ? 'finished' : panel;
+               let targetPanel = panel;
+               if (responseType === 'finished') targetPanel = 'finished';
+               else if (responseType === 'pendingpayment') targetPanel = 'pending';
+               else if (responseType === 'processing') targetPanel = 'added';
                setPanelTasks(targetPanel, tasks);
                setPanelMessage(targetPanel, 'success', result.message || '刷新成功');
            } catch (error) {
@@ -866,7 +944,7 @@
        async function initializeTaskPanels() {
            await loadAutoPayStatus();
            await refreshGridOnly();
-           await Promise.allSettled([refreshTasks('added'), refreshTasks('finished')]);
+           await Promise.allSettled([refreshTasks('added'), refreshTasks('pending'), refreshTasks('finished')]);
             await refreshLoginStat(false);
        }
 
@@ -889,6 +967,49 @@
             loginStatValidate.classList.add('border-gray-300', 'text-gray-600', 'bg-gray-100');
             loginStatValidate.textContent = '未知';
         }
+
+       async function removePendingItem(el) {
+           const item = el.closest('[data-task-item]');
+           if (!item) return;
+           const uniqueid = item.dataset.uniqueid;
+           if (!uniqueid) {
+               setPanelMessage('pending', 'error', '任务缺少 uniqueid，无法删除');
+               return;
+           }
+           setButtonLoading(el, true, '删除中...');
+           try {
+                const result = await postToServer(API_ENDPOINTS.deletePending, { uniqueid: uniqueid });
+               pagerState.pending.tasks = pagerState.pending.tasks.filter(task => String(task.uniqueid || task.uniqueId || task.id || '') !== String(uniqueid));
+               renderPanel('pending');
+               setPanelMessage('pending', 'success', result.message || '删除成功');
+           } catch (error) {
+               setPanelMessage('pending', 'error', error.message || '删除失败，请稍后重试');
+           } finally {
+               setButtonLoading(el, false, '删除中...');
+           }
+       }
+
+       async function payPendingItem(el) {
+           const item = el.closest('[data-task-item]');
+           if (!item) return;
+           const uniqueid = item.dataset.uniqueid;
+           if (!uniqueid) {
+               setPanelMessage('pending', 'error', '任务缺少 uniqueid，无法购买');
+               return;
+           }
+           setButtonLoading(el, true, '购买中...');
+           try {
+               const result = await postToServer(API_ENDPOINTS.payPending, { uniqueid: uniqueid });
+               pagerState.pending.tasks = pagerState.pending.tasks.filter(task => String(task.uniqueid || task.uniqueId || task.id || '') !== String(uniqueid));
+               renderPanel('pending');
+               setPanelMessage('pending', 'success', result.message || '购买成功');
+               await refreshTasks('finished');
+           } catch (error) {
+               setPanelMessage('pending', 'error', error.message || '购买失败，请稍后重试');
+           } finally {
+               setButtonLoading(el, false, '购买中...');
+           }
+       }
 
         function formatTimestampToDateTime(rawValue) {
             if (rawValue === undefined || rawValue === null || rawValue === '') return '-';
@@ -962,14 +1083,21 @@
        // 事件绑定
        addBtn.addEventListener('click', addItem);
        refreshAddedBtn.addEventListener('click', () => refreshTasks('added'));
+       refreshPendingBtn.addEventListener('click', () => refreshTasks('pending'));
        refreshFinishedBtn.addEventListener('click', () => refreshTasks('finished'));
        addedList.addEventListener('click', handleListAction);
+       pendingList.addEventListener('click', handleListAction);
        finishedList.addEventListener('click', handleListAction);
        statusGrid.addEventListener('click', handleStatusGridClick);
        pageSizeAdded.addEventListener('change', function () {
            pagerState.added.pageSize = Number(pageSizeAdded.value) || 5;
            pagerState.added.page = 1;
            renderPanel('added');
+       });
+       pageSizePending.addEventListener('change', function () {
+           pagerState.pending.pageSize = Number(pageSizePending.value) || 5;
+           pagerState.pending.page = 1;
+           renderPanel('pending');
        });
        pageSizeFinished.addEventListener('change', function () {
            pagerState.finished.pageSize = Number(pageSizeFinished.value) || 5;
@@ -978,6 +1106,8 @@
        });
        prevAddedBtn.addEventListener('click', () => changePage('added', -1));
        nextAddedBtn.addEventListener('click', () => changePage('added', 1));
+       prevPendingBtn.addEventListener('click', () => changePage('pending', -1));
+       nextPendingBtn.addEventListener('click', () => changePage('pending', 1));
        prevFinishedBtn.addEventListener('click', () => changePage('finished', -1));
        nextFinishedBtn.addEventListener('click', () => changePage('finished', 1));
        refreshGridBtn.addEventListener('click', async function () {
@@ -998,6 +1128,7 @@
 
        // 初始渲染
        renderPanel('added');
+       renderPanel('pending');
        renderPanel('finished');
        updateSelectableOptions();
        initializeTaskPanels();

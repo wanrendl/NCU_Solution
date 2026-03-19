@@ -47,6 +47,13 @@ struct ReservationResult {
 	ReservationInfo reservationInfo;
 };
 
+struct ReservationPendingPayment {
+	std::string date;
+	std::string time;
+	std::string court;
+	std::string reservationId;
+};
+
 struct loginInfo {
 	bool validate;
 	std::string token;
@@ -59,8 +66,8 @@ const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/
 
 class ReservationManager {
 private:
-	const std::string username = "5716125061";
-	const std::string password = "qaqveQ-3xyzty-vudqut";
+	const std::string username = "***";
+	const std::string password = "***";
 private:
 	Logger& logger_;
 private:
@@ -73,12 +80,14 @@ private:
 	std::queue<ReservationInfo> pendingReservations_;
 	std::vector<ReservationInfo> ReservationProcessingQueue;
 	std::vector<OverdateReservationInfo> ReservationFinishQueue;
+	std::map<std::string, ReservationPendingPayment> ReservationPendingPaymentMap;
 	std::thread reserveProcessThread_;
 	std::thread otherProcessThread_;
 	std::mutex pendingReservationMutex_;
 	std::condition_variable pendingReservationCv_;
 	std::mutex processingQueueMutex;
 	std::mutex finishedQueueMutex;
+	std::mutex pendingPaymentMutex;
 	std::mutex tokenMutex;
 	std::mutex processingFileMutex;
 	std::mutex finishedFileMutex;
@@ -118,22 +127,10 @@ public:
 	}
 
 	void checkTokenValidate() {
-		std::string tokenSnapshot;
-		{
-			std::scoped_lock lock(tokenMutex);
-			tokenSnapshot = token;
-		}
-		bool validity = CheckToken(tokenSnapshot, username);
-		if (!validity) {
-			logger_.Warning("Token is invalid during validation check. Requesting new token generation.");
-			generateToken.store(true);
-			while (!tokenReady.load()) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(10));
-			}
-		} else {
-			std::scoped_lock lock(loginInfoMutex);
-			currentloginInfo.validate = validity;
-			currentloginInfo.lastCheckTime = time(nullptr);
+		tokenReady.store(false);
+		generateToken.store(true);
+		while (!tokenReady.load()) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
 	}
 
@@ -150,6 +147,7 @@ public:
 		}
 		std::string tokenSnapshot;
 		
+      tokenReady.store(false);
 		generateToken.store(true);
 		while (!tokenReady.load()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -212,6 +210,7 @@ public:
 
 	bool getReservationTable(std::string date, Json::Value& table) {
 		std::string tokenSnapshot;
+      tokenReady.store(false);
 		generateToken.store(true);
 		while (!tokenReady.load()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -231,7 +230,40 @@ public:
 
 	std::vector<OverdateReservationInfo> getReservationFinishQueueSnapshot() {
 		std::scoped_lock lock(finishedQueueMutex);
-		return ReservationFinishQueue;
+		std::vector<OverdateReservationInfo> returnValue = ReservationFinishQueue;
+		std::reverse(returnValue.begin(), returnValue.end());
+		return returnValue;
+	}
+
+	std::map<std::string, ReservationPendingPayment> getReservationPendingPayment() {
+		std::string tokenSnapshot;
+      tokenReady.store(false);
+		generateToken.store(true);
+		while (!tokenReady.load()) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		{
+			std::scoped_lock lock(tokenMutex);
+			tokenSnapshot = token;
+		}
+		GeneratePendingPaymentReservations(tokenSnapshot);
+		std::scoped_lock lock(pendingPaymentMutex);
+		return ReservationPendingPaymentMap;
+	}
+
+	bool removePendingPayment(const std::string& uniqueid) {
+		std::scoped_lock lock(pendingPaymentMutex);
+        auto it = ReservationPendingPaymentMap.find(uniqueid);
+		if (it == ReservationPendingPaymentMap.end()) return false;
+		if (it->second.reservationId.empty()) return false;
+		std::string tokenSnapshot;
+		{
+			std::scoped_lock lock2(tokenMutex);
+			tokenSnapshot = token;
+		}
+     if (!deletePendingPayment(it->second.reservationId, tokenSnapshot)) return false;
+		ReservationPendingPaymentMap.erase(it);
+		return true;
 	}
 
 	void getloginInfo(loginInfo& info) {
@@ -254,6 +286,7 @@ public:
 		logger_.Info("Reservation manager is starting background workers.");
 		reserveProcessThread_ = std::thread(&ReservationManager::processReservation, this);
 		otherProcessThread_ = std::thread(&ReservationManager::processOther, this);
+      tokenReady.store(false);
 		generateToken.store(true);
 	}
 
@@ -265,10 +298,27 @@ private:
 		loginInfo snapshotInfo;
 		while (!stopRequested_.load()) {
 			if (generateToken.load()) { // If token generation is requested
+				tokenReady.store(false);
 				generateToken.store(false);
 
 				checkResult = CheckToken(token, username);
 				snapshotInfo.lastCheckTime = time(nullptr);
+				snapshotInfo.validate = checkResult;
+				snapshotInfo.username = username;
+
+				if (checkResult) {
+                   {
+						std::scoped_lock lock(tokenMutex);
+						snapshotInfo.token = token;
+					}
+					{
+						std::scoped_lock lock(loginInfoMutex);
+						snapshotInfo.lastUpdateTime = currentloginInfo.lastUpdateTime;
+						currentloginInfo = snapshotInfo;
+					}
+					tokenReady.store(true);
+					continue;
+				}
 
 				logger_.Info("Token check result: " + std::string(checkResult ? "valid" : "invalid") + ", token: " + token);
 
@@ -281,9 +331,8 @@ private:
 					}
 				}
 
-				snapshotInfo.validate = true;
+				snapshotInfo.validate = !tempToken.empty();
 				snapshotInfo.token = tempToken;
-				snapshotInfo.username = username;
 				{
 					std::scoped_lock lock(loginInfoMutex);
 					currentloginInfo = snapshotInfo;
@@ -297,7 +346,7 @@ private:
 
 	void processReservation() {
 		Logger::SetCurrentThreadName("Thread-Reservation");
-		time_t lastCheckTime = CurrentTime().GetSeconds();
+     time_t lastCheckTime = time(nullptr);
 		std::vector<std::future<ReservationResult>> reservationFutures(24);
 		int index = 0;
 			auto pushFinishResult = [this](ReservationResult&& rResult) {
@@ -344,16 +393,12 @@ private:
 
 		while (!stopRequested_.load()) {
 			if (CurrentTime().GetHour() >= 11 && CurrentTime().GetHour() < 12 && CurrentTime().GetMinute() >= 50) {
-				if (CurrentTime().GetSeconds() - lastCheckTime >= 600) { // Check token validity every 10 minutes
-					lastCheckTime = CurrentTime().GetSeconds();
-					std::string tempToken;
+             if (time(nullptr) - lastCheckTime >= 600) { // Check token validity every 10 minutes
+					lastCheckTime = time(nullptr);
+					tokenReady.store(false);
 					generateToken.store(true);
 					while (!tokenReady.load()) {
 						std::this_thread::sleep_for(std::chrono::milliseconds(10));
-					}
-					{
-						std::scoped_lock lock(tokenMutex);
-						tempToken = token;
 					}
 				}
 			}
@@ -473,7 +518,7 @@ private:
 		if (!processingQueueFile.is_open()) return false;
 		std::vector<ReservationInfo> tempQueue;
 		std::string line;
-	   processingQueueFile.clear();
+		processingQueueFile.clear();
 		processingQueueFile.seekg(0, std::ios::beg);
 		while (std::getline(processingQueueFile, line)) {
 			std::istringstream iss(line);
@@ -521,7 +566,7 @@ private:
 		return true;
 	}
 	bool readFinishedFile() {
-	 std::scoped_lock fileLock(finishedFileMutex);
+		std::scoped_lock fileLock(finishedFileMutex);
 		if (!finishedQueueFile.is_open()) return false;
 		finishedQueueFile.clear();
 		finishedQueueFile.seekg(0, std::ios::beg);
@@ -670,10 +715,55 @@ private:
 			result = client.Get("/api/badminton/getUserPhone" + ssUsername.str(), headers);
 		} while (!result);
 
-		if (ReadJsonFromString(result->body)["code"].asString() != "200") return false;
+		bool validity = ReadJsonFromString(result->body)["code"].asString() == "200";
+
+		{
+			std::scoped_lock lock(loginInfoMutex);
+			currentloginInfo.validate = validity;
+			currentloginInfo.lastCheckTime = time(nullptr);
+		}
+		
+		if (!validity) return false;
 		return true;
 	}
 
+	void GeneratePendingPaymentReservations(std::string token) {
+		httplib::SSLClient client("ndyy.ncu.edu.cn");
+		httplib::Headers headers;
+		headers.emplace("Token", token);
+		httplib::Result result;
+		do {
+			result = client.Get("/api/badminton/userReservationList?pageNum=1&pageSize=10", headers);
+		} while (!result);
+
+		Json::Value response = ReadJsonFromString(result->body);
+
+		if (response["code"].asString() == "200") {
+			std::scoped_lock lock(pendingPaymentMutex);
+           ReservationPendingPaymentMap.clear();
+			std::string uniqueid;
+			for (auto& it : response["data"]["rows"]) {
+				std::string date = it["date"].asString();
+				std::string court = "Court-" + it["areaId"].asString();
+				std::string time = it["startTime"].asString() + ":00-" + std::to_string(it["startTime"].asInt() + 1) + ":00";
+				std::string reservationId = it["reservationId"].asString();
+               uniqueid = Sha256::Hex(reservationId + date + court + time);
+				ReservationPendingPaymentMap[uniqueid] = { date, time, court, reservationId };
+			}
+		}
+	}
+	bool deletePendingPayment(const std::string& reservationId, std::string token) {
+		httplib::SSLClient client("ndyy.ncu.edu.cn");
+		httplib::Headers headers;
+		headers.emplace("Token", token);
+		httplib::Result result;
+		do {
+			result = client.Delete("/api/badminton/deleteReservationId/" + reservationId, headers);
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		} while (!result);
+		if (result->body == "true") return true;
+		return false;
+	}
 	ReservationResult AsyncReservation(ReservationInfo rInfo, std::string token) {
 		ReservationResult rResult;
 		rResult.reservationInfo = rInfo;
