@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<link rel="icon" href="./icon.png" type="image/png" />
+	<title>文件转换面板</title>
+	<script src="./tailwindcss.min.js"></script>
+	<link href="./font-awesome.min.css" rel="stylesheet">
+	<style>
+		* {
+			box-sizing: border-box;
+		}
+
+		.card-hover {
+			transition: all 0.25s ease;
+		}
+
+		.card-hover:hover {
+			transform: translateY(-3px);
+			box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);
+		}
+
+		.file-name {
+			word-break: break-all;
+		}
+
+        body {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+	</style>
+</head>
+<body class="bg-gray-50 min-h-screen m-0 p-0">
+	<div class="max-w-7xl mx-auto px-4 py-6">
+		<div class="bg-white rounded-xl shadow p-5 mb-6 card-hover">
+			<h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+				<i class="fa fa-upload text-blue-600 mr-2"></i>文件上传
+			</h2>
+			<div class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+				<input id="upload-file-input" type="file" multiple class="w-full sm:flex-1 border border-gray-300 rounded-lg px-3 py-2 bg-white" />
+				<button id="upload-btn" type="button" class="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition whitespace-nowrap">
+					<i class="fa fa-cloud-upload mr-1"></i>上传
+				</button>
+			</div>
+			<p id="upload-message" class="text-sm text-gray-500 mt-3">请选择文件后上传</p>
+		</div>
+
+		<div class="bg-white rounded-xl shadow p-5 mb-6 card-hover">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-xl font-semibold text-gray-800 flex items-center">
+					<i class="fa fa-clock-o text-amber-600 mr-2"></i>待转换列表
+				</h2>
+				<div class="flex items-center gap-2">
+					<span id="pending-message" class="text-sm text-gray-500"></span>
+					<button id="pending-refresh-btn" type="button" class="text-sm bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg transition">
+						<i class="fa fa-refresh mr-1"></i>刷新
+					</button>
+				</div>
+			</div>
+			<div id="pending-file-list" class="space-y-3"></div>
+          <div class="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                <label for="page-size-pending-files" class="text-gray-600">每页显示</label>
+                <select id="page-size-pending-files" class="border border-gray-300 rounded px-2 py-1">
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                </select>
+                <span id="page-info-pending-files" class="text-gray-500">第 1 / 1 页</span>
+                <button id="prev-pending-files-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">上一页</button>
+                <button id="next-pending-files-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">下一页</button>
+            </div>
+		</div>
+
+		<div class="bg-white rounded-xl shadow p-5 card-hover">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-xl font-semibold text-gray-800 flex items-center">
+					<i class="fa fa-files-o text-indigo-600 mr-2"></i>已转换列表
+				</h2>
+				<div class="flex items-center gap-2">
+					<span id="list-message" class="text-sm text-gray-500"></span>
+					<button id="refresh-btn" type="button" class="text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg transition">
+						<i class="fa fa-refresh mr-1"></i>刷新
+					</button>
+				</div>
+			</div>
+			<div id="file-list" class="space-y-3"></div>
+          <div class="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                <label for="page-size-converted-files" class="text-gray-600">每页显示</label>
+                <select id="page-size-converted-files" class="border border-gray-300 rounded px-2 py-1">
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                </select>
+                <span id="page-info-converted-files" class="text-gray-500">第 1 / 1 页</span>
+                <button id="prev-converted-files-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">上一页</button>
+                <button id="next-converted-files-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">下一页</button>
+            </div>
+		</div>
+	</div>
+
+	<script>
+		const API_ENDPOINTS = {
+			upload: '/api/convert/upload',
+			pendingRefresh: '/api/convert/pending/refresh',
+			pendingDelete: '/api/convert/pending/delete',
+			pendingConvert: '/api/convert/pending/convert',
+			refresh: '/api/convert/file/refresh',
+			cover: '/api/convert/file/cover',
+			play: '/api/convert/play',
+			download: '/api/convert/file/download',
+			delete: '/api/convert/file/delete'
+		};
+
+		const uploadInput = document.getElementById('upload-file-input');
+		const uploadBtn = document.getElementById('upload-btn');
+		const pendingRefreshBtn = document.getElementById('pending-refresh-btn');
+		const refreshBtn = document.getElementById('refresh-btn');
+		const uploadMessage = document.getElementById('upload-message');
+		const pendingMessage = document.getElementById('pending-message');
+		const listMessage = document.getElementById('list-message');
+		const pendingFileList = document.getElementById('pending-file-list');
+		const fileList = document.getElementById('file-list');
+        const pageSizePendingFiles = document.getElementById('page-size-pending-files');
+        const pageInfoPendingFiles = document.getElementById('page-info-pending-files');
+        const prevPendingFilesBtn = document.getElementById('prev-pending-files-btn');
+        const nextPendingFilesBtn = document.getElementById('next-pending-files-btn');
+        const pageSizeConvertedFiles = document.getElementById('page-size-converted-files');
+        const pageInfoConvertedFiles = document.getElementById('page-info-converted-files');
+        const prevConvertedFilesBtn = document.getElementById('prev-converted-files-btn');
+        const nextConvertedFilesBtn = document.getElementById('next-converted-files-btn');
+
+        document.addEventListener('copy', (e) => e.preventDefault());
+        document.addEventListener('cut', (e) => e.preventDefault());
+        document.addEventListener('selectstart', (e) => e.preventDefault());
+        document.addEventListener('keydown', (e) => {
+            const key = String(e.key || '').toLowerCase();
+            if ((e.ctrlKey || e.metaKey) && (key === 'c' || key === 'x' || key === 'insert')) {
+                e.preventDefault();
+            }
+        });
+
+        const pagerState = {
+            pending: { items: [], page: 1, pageSize: Number(pageSizePendingFiles.value) },
+            converted: { items: [], page: 1, pageSize: Number(pageSizeConvertedFiles.value) }
+        };
+
+		function setButtonLoading(button, isLoading, loadingText) {
+			if (isLoading) {
+				button.dataset.originalHtml = button.innerHTML;
+				button.disabled = true;
+				button.classList.add('opacity-60', 'cursor-not-allowed');
+				button.textContent = loadingText;
+				return;
+			}
+			button.disabled = false;
+			button.classList.remove('opacity-60', 'cursor-not-allowed');
+			if (button.dataset.originalHtml) {
+				button.innerHTML = button.dataset.originalHtml;
+				delete button.dataset.originalHtml;
+			}
+		}
+
+		function setMessage(target, type, text) {
+			target.classList.remove('text-gray-500', 'text-red-600', 'text-green-600');
+			if (type === 'error') target.classList.add('text-red-600');
+			else if (type === 'success') target.classList.add('text-green-600');
+			else target.classList.add('text-gray-500');
+			target.textContent = text || '';
+		}
+
+		function normalizeFiles(result) {
+			const data = result && result.data;
+			if (Array.isArray(data)) return data;
+			if (data && Array.isArray(data.files)) return data.files;
+			if (Array.isArray(result.files)) return result.files;
+			return [];
+		}
+
+		function resolveFileName(file) {
+			if (typeof file === 'string') return file;
+			if (!file || typeof file !== 'object') return '';
+			return String(file.name || file.fileName || file.filename || file.title || '');
+		}
+
+        function resolveFormat(file) {
+            if (!file || typeof file !== 'object') return '';
+            return String(file.format || file.file_format || '').toUpperCase();
+        }
+
+        function resolveUniqueId(file) {
+            if (!file || typeof file !== 'object') return '';
+            return String(file.uniqueid || file.uniqueId || file.id || '');
+        }
+
+        function resolveFileSize(file) {
+            if (!file || typeof file !== 'object') return 0;
+            const value = file.file_size ?? file.filesize ?? file.fileSize ?? file.size ?? 0;
+            const n = Number(value);
+            return Number.isFinite(n) && n > 0 ? n : 0;
+        }
+
+        function formatFileSize(sizeInBytes) {
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let size = Number(sizeInBytes) || 0;
+            let unitIndex = 0;
+
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+
+            const shown = unitIndex === 0 ? String(Math.floor(size)) : size.toFixed(1);
+            return `${shown} ${units[unitIndex]}`;
+        }
+
+		async function postJson(url, payload) {
+			const response = await fetch(url, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload || {}),
+				credentials: 'same-origin',
+				cache: 'no-cache'
+			});
+			let result = null;
+			try {
+				result = await response.json();
+			} catch (_) {
+				result = null;
+			}
+			if (!response.ok) throw new Error((result && result.message) || '服务器请求失败');
+			if (result && result.success === false) throw new Error(result.message || '服务器返回失败');
+			return result || {};
+		}
+
+        function createConvertedFileItem(file) {
+            const fileName = resolveFileName(file);
+            const uniqueId = resolveUniqueId(file);
+            const fileSize = resolveFileSize(file);
+            const format = resolveFormat(file);
+         const item = document.createElement('div');
+            item.className = 'bg-gray-50 border border-gray-200 rounded-lg p-4 card-hover';
+			item.dataset.filename = fileName;
+           item.dataset.uniqueid = uniqueId;
+
+            const row = document.createElement('div');
+            row.className = 'flex flex-col sm:flex-row sm:items-center justify-between gap-2';
+
+			const left = document.createElement('div');
+           left.className = 'flex items-center gap-3 min-w-0';
+
+           const coverButton = document.createElement('button');
+            coverButton.type = 'button';
+            coverButton.className = 'w-10 h-10 rounded-full border border-gray-300 overflow-hidden bg-gray-100 shrink-0';
+            coverButton.dataset.action = 'toggle-play';
+            coverButton.title = '展开/收起播放器';
+
+            const coverImage = document.createElement('img');
+            coverImage.className = 'w-full h-full object-cover';
+            coverImage.alt = 'cover';
+            coverImage.dataset.role = 'cover';
+            coverImage.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"%3E%3Ccircle cx="32" cy="32" r="32" fill="%23e5e7eb"/%3E%3Cpath d="M24 22v20.5A4.5 4.5 0 1 0 27 47V30h13v10.5A4.5 4.5 0 1 0 43 45V22H24z" fill="%239ca3af"/%3E%3C/svg%3E';
+            coverButton.appendChild(coverImage);
+            left.appendChild(coverButton);
+
+            const info = document.createElement('div');
+            info.className = 'text-sm text-gray-700 file-name flex items-center flex-wrap gap-2 min-w-0';
+
+            const nameText = document.createElement('span');
+            nameText.textContent = fileName || '(未知文件名)';
+         info.appendChild(nameText);
+
+            if (format) {
+                const formatTag = document.createElement('span');
+                formatTag.className = 'text-xs px-2 py-0.5 rounded border border-green-500 text-green-700 bg-green-50';
+                formatTag.textContent = format;
+                info.appendChild(formatTag);
+            }
+            left.appendChild(info);
+
+			const right = document.createElement('div');
+			right.className = 'flex items-center gap-3';
+
+            const sizeText = document.createElement('span');
+            sizeText.className = 'text-xs text-gray-500';
+            sizeText.textContent = formatFileSize(fileSize);
+
+			const deleteBtn = document.createElement('button');
+			deleteBtn.type = 'button';
+			deleteBtn.className = 'text-red-500 hover:text-red-600 text-sm';
+			deleteBtn.innerHTML = '<i class="fa fa-trash mr-1"></i>删除';
+			deleteBtn.dataset.action = 'delete';
+
+           const downloadBtn = document.createElement('button');
+            downloadBtn.type = 'button';
+            downloadBtn.className = 'text-green-600 hover:text-green-700 text-sm';
+            downloadBtn.innerHTML = '<i class="fa fa-download mr-1"></i>下载';
+            downloadBtn.dataset.action = 'download';
+
+           right.appendChild(sizeText);
+			right.appendChild(deleteBtn);
+            right.appendChild(downloadBtn);
+         row.appendChild(left);
+            row.appendChild(right);
+
+            const playerWrap = document.createElement('div');
+            playerWrap.className = 'hidden mt-3';
+            playerWrap.dataset.role = 'player-wrap';
+
+            const audio = document.createElement('audio');
+            audio.className = 'w-full';
+            audio.controls = true;
+            audio.preload = 'none';
+            audio.dataset.role = 'audio-player';
+            playerWrap.appendChild(audio);
+
+            item.appendChild(row);
+            item.appendChild(playerWrap);
+			return item;
+		}
+
+        async function toggleConvertedAudio(item, triggerElement) {
+            if (!item) return;
+            const uniqueId = String(item.dataset.uniqueid || '');
+            if (!uniqueId) {
+                setMessage(listMessage, 'error', 'uniqueid无效');
+                return;
+            }
+
+            const wrap = item.querySelector('[data-role="player-wrap"]');
+            const audio = item.querySelector('[data-role="audio-player"]');
+            if (!wrap || !audio) return;
+
+            if (!wrap.classList.contains('hidden')) {
+                audio.pause();
+                wrap.classList.add('hidden');
+                return;
+            }
+
+            if (!audio.src) {
+                triggerElement?.classList.add('opacity-60');
+                try {
+                    const result = await postJson(API_ENDPOINTS.play, { uniqueid: uniqueId });
+                    const data = result && result.data ? result.data : {};
+                   if (!data.filepath) {
+                        throw new Error(result.message || '音频路径无效');
+                    }
+                    const prefix = String(data.filepath).startsWith('/') ? '' : '/';
+                    audio.src = prefix + data.filepath + '?t=' + Date.now();
+                   if (data.mime) {
+                        audio.setAttribute('type', String(data.mime));
+                    }
+                } catch (error) {
+                    setMessage(listMessage, 'error', error.message || '加载音频失败');
+                    triggerElement?.classList.remove('opacity-60');
+                    return;
+                } finally {
+                    triggerElement?.classList.remove('opacity-60');
+                }
+            }
+
+            wrap.classList.remove('hidden');
+            try { await audio.play(); } catch (_) {}
+        }
+
+        async function loadConvertedCover(uniqueId, imageElement) {
+            if (!uniqueId || !imageElement) {
+                return;
+            }
+
+            try {
+                const result = await postJson(API_ENDPOINTS.cover, { uniqueid: uniqueId });
+                const data = result && result.data ? result.data : {};
+                if (typeof data.image === 'string' && data.image.length > 0) {
+                    imageElement.src = data.image;
+                    return;
+                }
+                if (typeof data.filepath === 'string' && data.filepath.length > 0) {
+                    const prefix = data.filepath.startsWith('/') ? '' : '/';
+                    imageElement.src = prefix + data.filepath + '?t=' + Date.now();
+                }
+            } catch (_) {
+                // ignore cover load errors and keep placeholder
+            }
+        }
+
+		function createPendingFileItem(file) {
+			const fileName = resolveFileName(file);
+            const uniqueId = resolveUniqueId(file);
+            const fileSize = resolveFileSize(file);
+			const item = document.createElement('div');
+			item.className = 'bg-gray-50 border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 card-hover';
+			item.dataset.filename = fileName;
+            item.dataset.uniqueid = uniqueId;
+
+			const left = document.createElement('div');
+			left.className = 'text-sm text-gray-700 file-name';
+			left.textContent = fileName || '(未知文件名)';
+
+			const right = document.createElement('div');
+			right.className = 'flex items-center gap-3';
+
+            const sizeText = document.createElement('span');
+            sizeText.className = 'text-xs text-gray-500';
+            sizeText.textContent = formatFileSize(fileSize);
+
+			const deleteBtn = document.createElement('button');
+			deleteBtn.type = 'button';
+			deleteBtn.className = 'text-red-500 hover:text-red-600 text-sm';
+			deleteBtn.innerHTML = '<i class="fa fa-trash mr-1"></i>删除';
+			deleteBtn.dataset.action = 'pending-delete';
+
+			const convertBtn = document.createElement('button');
+			convertBtn.type = 'button';
+			convertBtn.className = 'text-blue-600 hover:text-blue-700 text-sm';
+			convertBtn.innerHTML = '<i class="fa fa-exchange mr-1"></i>转换';
+			convertBtn.dataset.action = 'pending-convert';
+
+           right.appendChild(sizeText);
+            right.appendChild(deleteBtn);
+			right.appendChild(convertBtn);
+			item.appendChild(left);
+			item.appendChild(right);
+			return item;
+		}
+
+		function renderFileList(files) {
+            pagerState.converted.items = Array.isArray(files) ? files : [];
+            const totalPages = Math.max(1, Math.ceil(pagerState.converted.items.length / pagerState.converted.pageSize));
+            if (pagerState.converted.page > totalPages) {
+                pagerState.converted.page = totalPages;
+            }
+
+            const start = (pagerState.converted.page - 1) * pagerState.converted.pageSize;
+            const currentItems = pagerState.converted.items.slice(start, start + pagerState.converted.pageSize);
+
+			fileList.innerHTML = '';
+          if (pagerState.converted.items.length === 0) {
+				const empty = document.createElement('div');
+				empty.className = 'text-sm text-gray-500';
+				empty.textContent = '暂无文件';
+				fileList.appendChild(empty);
+         } else {
+                currentItems.forEach(file => {
+                    const item = createConvertedFileItem(file);
+                    fileList.appendChild(item);
+                    const uniqueId = String(item.dataset.uniqueid || '');
+                    const coverImage = item.querySelector('img[data-role="cover"]');
+                    loadConvertedCover(uniqueId, coverImage);
+                });
+			}
+
+            pageInfoConvertedFiles.textContent = `第 ${pagerState.converted.page} / ${totalPages} 页`;
+            prevConvertedFilesBtn.disabled = pagerState.converted.page <= 1;
+            nextConvertedFilesBtn.disabled = pagerState.converted.page >= totalPages;
+		}
+
+		function renderPendingFileList(files) {
+         pagerState.pending.items = Array.isArray(files) ? files : [];
+            const totalPages = Math.max(1, Math.ceil(pagerState.pending.items.length / pagerState.pending.pageSize));
+            if (pagerState.pending.page > totalPages) {
+                pagerState.pending.page = totalPages;
+            }
+
+            const start = (pagerState.pending.page - 1) * pagerState.pending.pageSize;
+            const currentItems = pagerState.pending.items.slice(start, start + pagerState.pending.pageSize);
+
+			pendingFileList.innerHTML = '';
+          if (pagerState.pending.items.length === 0) {
+				const empty = document.createElement('div');
+				empty.className = 'text-sm text-gray-500';
+				empty.textContent = '暂无待转换文件';
+				pendingFileList.appendChild(empty);
+         } else {
+                currentItems.forEach(file => pendingFileList.appendChild(createPendingFileItem(file)));
+			}
+
+            pageInfoPendingFiles.textContent = `第 ${pagerState.pending.page} / ${totalPages} 页`;
+            prevPendingFilesBtn.disabled = pagerState.pending.page <= 1;
+            nextPendingFilesBtn.disabled = pagerState.pending.page >= totalPages;
+		}
+
+		async function refreshPendingFileList() {
+			setButtonLoading(pendingRefreshBtn, true, '刷新中...');
+			try {
+				const result = await postJson(API_ENDPOINTS.pendingRefresh, { refresh: true });
+				const files = normalizeFiles(result);
+				renderPendingFileList(files);
+				setMessage(pendingMessage, 'success', result.message || '刷新成功');
+			} catch (error) {
+				setMessage(pendingMessage, 'error', error.message || '刷新失败');
+			} finally {
+				setButtonLoading(pendingRefreshBtn, false, '刷新中...');
+			}
+		}
+
+		async function refreshFileList() {
+			setButtonLoading(refreshBtn, true, '刷新中...');
+			try {
+               const result = await postJson(API_ENDPOINTS.refresh, { refresh: true });
+				const files = normalizeFiles(result);
+				renderFileList(files);
+				setMessage(listMessage, 'success', result.message || '刷新成功');
+			} catch (error) {
+				setMessage(listMessage, 'error', error.message || '刷新失败');
+			} finally {
+				setButtonLoading(refreshBtn, false, '刷新中...');
+			}
+		}
+
+		async function uploadFiles() {
+			const files = Array.from(uploadInput.files || []);
+			if (files.length === 0) {
+				setMessage(uploadMessage, 'error', '请先选择文件');
+				return;
+			}
+
+			setButtonLoading(uploadBtn, true, '上传中...');
+			try {
+				for (const file of files) {
+					const formData = new FormData();
+					formData.append('file', file);
+					const response = await fetch(API_ENDPOINTS.upload, {
+						method: 'POST',
+						body: formData,
+						credentials: 'same-origin',
+						cache: 'no-cache'
+					});
+					let result = null;
+					try {
+						result = await response.json();
+					} catch (_) {
+						result = null;
+					}
+					if (!response.ok) throw new Error((result && result.message) || `上传失败: ${file.name}`);
+					if (result && result.success === false) throw new Error(result.message || `上传失败: ${file.name}`);
+				}
+				uploadInput.value = '';
+				setMessage(uploadMessage, 'success', '上传成功');
+				await refreshPendingFileList();
+			} catch (error) {
+				setMessage(uploadMessage, 'error', error.message || '上传失败');
+			} finally {
+				setButtonLoading(uploadBtn, false, '上传中...');
+			}
+		}
+
+     async function downloadFile(uniqueId, fileName, triggerBtn) {
+            if (!uniqueId) {
+                setMessage(listMessage, 'error', 'uniqueid无效');
+				return;
+			}
+
+			setButtonLoading(triggerBtn, true, '下载中...');
+			try {
+				const response = await fetch(API_ENDPOINTS.download, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+                   body: JSON.stringify({ uniqueid: uniqueId }),
+					credentials: 'same-origin',
+					cache: 'no-cache'
+				});
+				if (!response.ok) {
+					let err = '下载失败';
+					try {
+						const errorJson = await response.json();
+						err = (errorJson && errorJson.message) || err;
+					} catch (_) {}
+					throw new Error(err);
+				}
+
+				const blob = await response.blob();
+				const disposition = response.headers.get('content-disposition') || '';
+				const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+				const finalName = decodeURIComponent((match && (match[1] || match[2])) || fileName);
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = finalName;
+				document.body.appendChild(a);
+				a.click();
+				a.remove();
+				URL.revokeObjectURL(url);
+				setMessage(listMessage, 'success', '下载成功');
+			} catch (error) {
+				setMessage(listMessage, 'error', error.message || '下载失败');
+			} finally {
+				setButtonLoading(triggerBtn, false, '下载中...');
+			}
+		}
+
+       async function deleteFile(uniqueId, triggerBtn) {
+            if (!uniqueId) {
+                setMessage(listMessage, 'error', 'uniqueid无效');
+				return;
+			}
+
+			setButtonLoading(triggerBtn, true, '删除中...');
+			try {
+                const result = await postJson(API_ENDPOINTS.delete, { uniqueid: uniqueId });
+				setMessage(listMessage, 'success', result.message || '删除成功');
+				await refreshFileList();
+			} catch (error) {
+				setMessage(listMessage, 'error', error.message || '删除失败');
+			} finally {
+				setButtonLoading(triggerBtn, false, '删除中...');
+			}
+		}
+
+        async function deletePendingFile(uniqueId, triggerBtn) {
+            if (!uniqueId) {
+                setMessage(pendingMessage, 'error', 'uniqueid无效');
+				return;
+			}
+
+			setButtonLoading(triggerBtn, true, '删除中...');
+			try {
+             const result = await postJson(API_ENDPOINTS.pendingDelete, { uniqueid: uniqueId });
+				setMessage(pendingMessage, 'success', result.message || '删除成功');
+				await refreshPendingFileList();
+			} catch (error) {
+				setMessage(pendingMessage, 'error', error.message || '删除失败');
+			} finally {
+				setButtonLoading(triggerBtn, false, '删除中...');
+			}
+		}
+
+       async function convertPendingFile(uniqueId, triggerBtn) {
+            if (!uniqueId) {
+                setMessage(pendingMessage, 'error', 'uniqueid无效');
+				return;
+			}
+
+			setButtonLoading(triggerBtn, true, '转换中...');
+			try {
+                const result = await postJson(API_ENDPOINTS.pendingConvert, { uniqueid: uniqueId });
+				setMessage(pendingMessage, 'success', result.message || '转换成功');
+				await refreshPendingFileList();
+				await refreshFileList();
+			} catch (error) {
+				setMessage(pendingMessage, 'error', error.message || '转换失败');
+			} finally {
+				setButtonLoading(triggerBtn, false, '转换中...');
+			}
+		}
+
+		function handleFileListAction(event) {
+          const actionBtn = event.target.closest('[data-action]');
+			if (!actionBtn) return;
+          const item = actionBtn.closest('[data-uniqueid]');
+			if (!item) return;
+			const fileName = String(item.dataset.filename || '');
+            const uniqueId = String(item.dataset.uniqueid || '');
+			const action = actionBtn.dataset.action;
+
+            if (action === 'toggle-play') {
+                toggleConvertedAudio(item, actionBtn);
+                return;
+            }
+
+			if (action === 'download') {
+              downloadFile(uniqueId, fileName, actionBtn);
+				return;
+			}
+			if (action === 'delete') {
+                deleteFile(uniqueId, actionBtn);
+			}
+		}
+
+		function handlePendingFileListAction(event) {
+			const actionBtn = event.target.closest('button[data-action]');
+			if (!actionBtn) return;
+			const item = actionBtn.closest('[data-filename]');
+			if (!item) return;
+           const uniqueId = String(item.dataset.uniqueid || '');
+			const action = actionBtn.dataset.action;
+
+			if (action === 'pending-delete') {
+             deletePendingFile(uniqueId, actionBtn);
+				return;
+			}
+			if (action === 'pending-convert') {
+                convertPendingFile(uniqueId, actionBtn);
+			}
+		}
+
+		uploadBtn.addEventListener('click', uploadFiles);
+		pendingRefreshBtn.addEventListener('click', refreshPendingFileList);
+		refreshBtn.addEventListener('click', refreshFileList);
+		pendingFileList.addEventListener('click', handlePendingFileListAction);
+		fileList.addEventListener('click', handleFileListAction);
+
+        pageSizePendingFiles.addEventListener('change', () => {
+            pagerState.pending.pageSize = Number(pageSizePendingFiles.value) || 5;
+            pagerState.pending.page = 1;
+            renderPendingFileList(pagerState.pending.items);
+        });
+        pageSizeConvertedFiles.addEventListener('change', () => {
+            pagerState.converted.pageSize = Number(pageSizeConvertedFiles.value) || 5;
+            pagerState.converted.page = 1;
+            renderFileList(pagerState.converted.items);
+        });
+        prevPendingFilesBtn.addEventListener('click', () => {
+            if (pagerState.pending.page <= 1) return;
+            pagerState.pending.page--;
+            renderPendingFileList(pagerState.pending.items);
+        });
+        nextPendingFilesBtn.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil(pagerState.pending.items.length / pagerState.pending.pageSize));
+            if (pagerState.pending.page >= totalPages) return;
+            pagerState.pending.page++;
+            renderPendingFileList(pagerState.pending.items);
+        });
+        prevConvertedFilesBtn.addEventListener('click', () => {
+            if (pagerState.converted.page <= 1) return;
+            pagerState.converted.page--;
+            renderFileList(pagerState.converted.items);
+        });
+        nextConvertedFilesBtn.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil(pagerState.converted.items.length / pagerState.converted.pageSize));
+            if (pagerState.converted.page >= totalPages) return;
+            pagerState.converted.page++;
+            renderFileList(pagerState.converted.items);
+        });
+
+		refreshPendingFileList();
+		refreshFileList();
+	</script>
+</body>
+</html>

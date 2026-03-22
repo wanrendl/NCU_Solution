@@ -32,12 +32,20 @@ void Logger::Log(Level level, std::string_view message) {
 	const std::string line = BuildLine(level, message);
 
 	if (consoleEnabled_) {
-		std::cout << line << std::endl;
+     try {
+			std::cout << line << std::endl;
+		}
+		catch (...) {
+			consoleEnabled_ = false;
+		}
 	}
 
 	if (file_.is_open()) {
-		file_ << line << std::endl;
-		file_.flush();
+     try {
+			file_ << line << std::endl;
+			file_.flush();
+		}
+		catch (...) {}
 	}
 }
 

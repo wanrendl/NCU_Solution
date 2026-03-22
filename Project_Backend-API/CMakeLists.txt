@@ -10,6 +10,18 @@ find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 
+find_library(MYSQLCPPCONN_LIBRARY
+    NAMES mysqlcppconn mysqlcppconn-static mysqlcppconn8 mysqlcppconn8-static
+    HINTS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../../libraries/MySQL/lib
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../../libraries/MySQL/lib64
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../../libraries/vcpkg/installed/x64-windows/lib
+)
+
+if(NOT MYSQLCPPCONN_LIBRARY)
+    message(FATAL_ERROR "MySQL Connector/C++ library not found. Please ensure mysqlcppconn lib is available.")
+endif()
+
 add_executable(Project_Backend-API
     Source.cpp
     HTTPBackend.cpp
@@ -30,4 +42,5 @@ target_link_libraries(Project_Backend-API PRIVATE
     OpenSSL::Crypto
     Threads::Threads
     ${JSONCPP_LIBRARIES}
+   ${MYSQLCPPCONN_LIBRARY}
 )

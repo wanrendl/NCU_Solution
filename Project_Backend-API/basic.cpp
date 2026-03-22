@@ -316,7 +316,7 @@ bool CountdownTimer::compare(std::string time_date, std::string time_clock) {
 }
 std::string CountdownTimer::getRemainingTimeString() const {
 	long long totalSeconds = getRemainingSeconds();
-	int hours = totalSeconds / 3600;
+	long long hours = totalSeconds / 3600;
 	int minutes = (totalSeconds % 3600) / 60;
 	int seconds = totalSeconds % 60;
 	std::ostringstream oss;

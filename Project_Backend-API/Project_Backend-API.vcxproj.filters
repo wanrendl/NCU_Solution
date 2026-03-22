@@ -13,22 +13,52 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Resource\html">
+      <UniqueIdentifier>{7397c5d6-344c-4831-9bb6-4b48d25f6688}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header\encrypt">
+      <UniqueIdentifier>{a6d13687-4fd8-4bff-bbe4-309bd2965ea0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header\utils">
+      <UniqueIdentifier>{425a282a-52a2-42ad-91f7-bbb3ca4036c4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header\functions">
+      <UniqueIdentifier>{35e2a9b6-8c4d-4ebf-bc30-4d36384dc1f2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\encrypt">
+      <UniqueIdentifier>{7fbcaae0-180b-4d3d-8d7c-c906fda79449}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\utils">
+      <UniqueIdentifier>{8ed74694-c5a1-4336-ad89-d308e2f42d0b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\functions">
+      <UniqueIdentifier>{1169feb9-4206-4b29-90b0-1dd4498e7214}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source.cpp">
       <Filter>Source</Filter>
     </ClCompile>
-    <ClCompile Include="Logger.cpp">
-      <Filter>Source</Filter>
-    </ClCompile>
     <ClCompile Include="HTTPBackend.cpp">
       <Filter>Source</Filter>
     </ClCompile>
-    <ClCompile Include="basic.cpp">
-      <Filter>Source</Filter>
+    <ClCompile Include="base64.h">
+      <Filter>Header\encrypt</Filter>
+    </ClCompile>
+    <ClCompile Include="aes.cpp">
+      <Filter>Source\encrypt</Filter>
     </ClCompile>
     <ClCompile Include="sha256.cpp">
-      <Filter>Source</Filter>
+      <Filter>Source\encrypt</Filter>
+    </ClCompile>
+    <ClCompile Include="basic.cpp">
+      <Filter>Source\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="Logger.cpp">
+      <Filter>Source\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="ncmmeta.cpp">
+      <Filter>Source\utils</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -38,10 +68,7 @@
     <Text Include="CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="index.html">
-      <Filter>Resource</Filter>
-    </None>
-    <None Include="processingQueue">
+    <None Include="reservation.html">
       <Filter>Resource</Filter>
     </None>
     <None Include="font-awesome.min.css">
@@ -50,35 +77,53 @@
     <None Include="tailwindcss.min.js">
       <Filter>Resource</Filter>
     </None>
-    <None Include="finishedQueue">
-      <Filter>Resource</Filter>
-    </None>
     <None Include="README-linux.md" />
     <None Include="config.json">
       <Filter>Resource</Filter>
+    </None>
+    <None Include="convert.html">
+      <Filter>Resource</Filter>
+    </None>
+    <None Include="html\convert.html">
+      <Filter>Resource\html</Filter>
+    </None>
+    <None Include="html\reservation.html">
+      <Filter>Resource\html</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="HTTPBackend.h">
       <Filter>Header</Filter>
     </ClInclude>
-    <ClInclude Include="Logger.h">
-      <Filter>Header</Filter>
-    </ClInclude>
-    <ClInclude Include="json.h">
-      <Filter>Header</Filter>
-    </ClInclude>
-    <ClInclude Include="NCUReservation.h">
-      <Filter>Header</Filter>
-    </ClInclude>
-    <ClInclude Include="httplib.h">
-      <Filter>Header</Filter>
-    </ClInclude>
-    <ClInclude Include="basic.h">
-      <Filter>Header</Filter>
+    <ClInclude Include="aes.h">
+      <Filter>Header\encrypt</Filter>
     </ClInclude>
     <ClInclude Include="sha256.h">
-      <Filter>Header</Filter>
+      <Filter>Header\encrypt</Filter>
+    </ClInclude>
+    <ClInclude Include="basic.h">
+      <Filter>Header\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="json.h">
+      <Filter>Header\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="httplib.h">
+      <Filter>Header\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="Logger.h">
+      <Filter>Header\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="NCUReservation.h">
+      <Filter>Header\functions</Filter>
+    </ClInclude>
+    <ClInclude Include="Converter.h">
+      <Filter>Header\functions</Filter>
+    </ClInclude>
+    <ClInclude Include="databaseConnection.h">
+      <Filter>Header\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="ncmmeta.h">
+      <Filter>Header\utils</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

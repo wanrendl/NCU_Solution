@@ -10,6 +10,7 @@
 #include "json.h"
 #include "Logger.h"
 #include "sha256.h"
+#include "databaseConnection.h"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -70,6 +71,7 @@ private:
 	const std::string password = "***";
 private:
 	Logger& logger_;
+	DatabaseConnection& dbConnection_;
 private:
 	std::string token;
 	loginInfo currentloginInfo{ false, "", "", 0, 0 };
@@ -95,8 +97,8 @@ private:
 	std::fstream processingQueueFile;
 	std::fstream finishedQueueFile;
 public:
-	explicit ReservationManager(Logger& logger)
-		: logger_(logger) {
+	explicit ReservationManager(Logger& logger, DatabaseConnection& dbConnection)
+		: logger_(logger), dbConnection_(dbConnection) {
 	}
 
 	~ReservationManager() {
@@ -147,7 +149,7 @@ public:
 		}
 		std::string tokenSnapshot;
 		
-      tokenReady.store(false);
+	  tokenReady.store(false);
 		generateToken.store(true);
 		while (!tokenReady.load()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -189,7 +191,7 @@ public:
 			time_t reserveTime = StringToTimeStamp((dateRead - 2).Print()) + 12 * 3600 + 2;
 			std::scoped_lock lock(pendingReservationMutex_);
 			pendingReservations_.push({ date, court, time, reserveTime, uniqueid });
-			writeProcessingFile({ date, court, time, reserveTime, uniqueid });
+			addProcessing({ date, court, time, reserveTime, uniqueid });
 			info = "Reservation will be made at " + (dateRead - 2).Print() + " 12:00:00.";
 		}
 		pendingReservationCv_.notify_one();
@@ -201,7 +203,7 @@ public:
 		for (auto it = ReservationProcessingQueue.begin(); it != ReservationProcessingQueue.end(); ++it) {
 			if (it->uniqueid == uniqueid) {
 				ReservationProcessingQueue.erase(it);
-				removeProcessingFile(uniqueid);
+				removeProcessing(uniqueid);
 				return true;
 			}
 		}
@@ -210,7 +212,7 @@ public:
 
 	bool getReservationTable(std::string date, Json::Value& table) {
 		std::string tokenSnapshot;
-      tokenReady.store(false);
+	  tokenReady.store(false);
 		generateToken.store(true);
 		while (!tokenReady.load()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -237,7 +239,7 @@ public:
 
 	std::map<std::string, ReservationPendingPayment> getReservationPendingPayment() {
 		std::string tokenSnapshot;
-      tokenReady.store(false);
+	  tokenReady.store(false);
 		generateToken.store(true);
 		while (!tokenReady.load()) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -253,7 +255,7 @@ public:
 
 	bool removePendingPayment(const std::string& uniqueid) {
 		std::scoped_lock lock(pendingPaymentMutex);
-        auto it = ReservationPendingPaymentMap.find(uniqueid);
+		auto it = ReservationPendingPaymentMap.find(uniqueid);
 		if (it == ReservationPendingPaymentMap.end()) return false;
 		if (it->second.reservationId.empty()) return false;
 		std::string tokenSnapshot;
@@ -261,7 +263,7 @@ public:
 			std::scoped_lock lock2(tokenMutex);
 			tokenSnapshot = token;
 		}
-     if (!deletePendingPayment(it->second.reservationId, tokenSnapshot)) return false;
+	 if (!deletePendingPayment(it->second.reservationId, tokenSnapshot)) return false;
 		ReservationPendingPaymentMap.erase(it);
 		return true;
 	}
@@ -281,12 +283,12 @@ public:
 		}
 		processingQueueFile.open("processingQueue", std::ios::in | std::ios::out | std::ios::app);
 		finishedQueueFile.open("finishedQueue", std::ios::in | std::ios::out | std::ios::app);
-		readProcessingFile();
-		readFinishedFile();
+		readProcessing();
+		readFinished();
 		logger_.Info("Reservation manager is starting background workers.");
 		reserveProcessThread_ = std::thread(&ReservationManager::processReservation, this);
 		otherProcessThread_ = std::thread(&ReservationManager::processOther, this);
-      tokenReady.store(false);
+	  tokenReady.store(false);
 		generateToken.store(true);
 	}
 
@@ -307,7 +309,7 @@ private:
 				snapshotInfo.username = username;
 
 				if (checkResult) {
-                   {
+				   {
 						std::scoped_lock lock(tokenMutex);
 						snapshotInfo.token = token;
 					}
@@ -346,29 +348,55 @@ private:
 
 	void processReservation() {
 		Logger::SetCurrentThreadName("Thread-Reservation");
-     time_t lastCheckTime = time(nullptr);
+		time_t lastCheckTime = time(nullptr);
 		std::vector<std::future<ReservationResult>> reservationFutures(24);
+      std::vector<std::future<void>> persistenceFutures;
+		persistenceFutures.reserve(64);
 		int index = 0;
-			auto pushFinishResult = [this](ReservationResult&& rResult) {
-				std::scoped_lock finishLock(finishedQueueMutex);
-				ReservationFinishQueue.push_back({
-					rResult.status,
-					rResult.info,
-					rResult.reservationInfo.date,
-					rResult.reservationInfo.court,
-					rResult.reservationInfo.time,
-					rResult.reservationInfo.reserveTime
-				});
-				addFinishedFile({
-					rResult.status,
-					rResult.info,
-					rResult.reservationInfo.date,
-					rResult.reservationInfo.court,
-					rResult.reservationInfo.time,
-					rResult.reservationInfo.reserveTime
-				});
-				removeProcessingFile(rResult.reservationInfo.uniqueid);
+
+		auto drainPersistenceFutures = [&]() {
+			persistenceFutures.erase(
+				std::remove_if(
+					persistenceFutures.begin(),
+					persistenceFutures.end(),
+					[](std::future<void>& f) {
+						if (!f.valid()) return true;
+						if (f.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+							f.get();
+							return true;
+						}
+						return false;
+					}
+				),
+				persistenceFutures.end()
+			);
+		};
+
+		auto enqueuePersistence = [&](OverdateReservationInfo finishedInfo, std::string uniqueid) {
+			drainPersistenceFutures();
+			persistenceFutures.push_back(std::async(std::launch::async, [this, finishedInfo = std::move(finishedInfo), uniqueid = std::move(uniqueid)]() {
+				addFinishedFile(finishedInfo);
+				removeProcessing(uniqueid);
+			}));
+		};
+
+		auto pushFinishResult = [&](ReservationResult&& rResult) {
+			OverdateReservationInfo finishedInfo{
+				rResult.status,
+				rResult.info,
+				rResult.reservationInfo.date,
+				rResult.reservationInfo.court,
+				rResult.reservationInfo.time,
+				rResult.reservationInfo.reserveTime
 			};
+
+			{
+				std::scoped_lock finishLock(finishedQueueMutex);
+				ReservationFinishQueue.push_back(finishedInfo);
+			}
+
+			enqueuePersistence(std::move(finishedInfo), rResult.reservationInfo.uniqueid);
+		};
 
 			auto getTokenSnapshot = [this]() -> std::string {
 				std::scoped_lock tokenLock(tokenMutex);
@@ -389,11 +417,12 @@ private:
 						pushFinishResult(f.get());
 					}
 				}
+              drainPersistenceFutures();
 			};
 
 		while (!stopRequested_.load()) {
 			if (CurrentTime().GetHour() >= 11 && CurrentTime().GetHour() < 12 && CurrentTime().GetMinute() >= 50) {
-             if (time(nullptr) - lastCheckTime >= 600) { // Check token validity every 10 minutes
+			if (time(nullptr) - lastCheckTime >= 600) { // Check token validity every 10 minutes
 					lastCheckTime = time(nullptr);
 					tokenReady.store(false);
 					generateToken.store(true);
@@ -406,7 +435,7 @@ private:
 			std::queue<ReservationInfo> pendingLocal;
 			{
 				std::unique_lock pendingLock(pendingReservationMutex_);
-				pendingReservationCv_.wait_for(pendingLock, std::chrono::milliseconds(200), [this] {
+				pendingReservationCv_.wait_for(pendingLock, std::chrono::milliseconds(20), [this] {
 					return stopRequested_.load() || !pendingReservations_.empty();
 				});
 				if (stopRequested_.load()) {
@@ -467,22 +496,70 @@ private:
 			}
 			drainReadyFutures();
 		}
+
+		for (auto& f : reservationFutures) {
+			if (f.valid()) {
+				pushFinishResult(f.get());
+			}
+		}
+
+		for (auto& f : persistenceFutures) {
+			if (f.valid()) {
+				f.get();
+			}
+		}
 	}
 
 private:
-	bool readProcessingFile() {
-	   std::scoped_lock fileLock(processingFileMutex);
-		if (!processingQueueFile.is_open()) return false;
-		processingQueueFile.clear();
-		processingQueueFile.seekg(0, std::ios::beg);
-		std::string line;
-		while (std::getline(processingQueueFile, line)) {
-			std::istringstream iss(line);
-			ReservationInfo rInfo;
-			if (!(iss >> rInfo.uniqueid >> rInfo.date >> rInfo.court >> rInfo.time >> rInfo.reserveTime)) {
-				logger_.Warning("Failed to parse processing queue line: " + line);
-				continue;
+	bool readProcessing() {
+		//std::scoped_lock fileLock(processingFileMutex);
+		//if (!processingQueueFile.is_open()) return false;
+		//processingQueueFile.clear();
+		//processingQueueFile.seekg(0, std::ios::beg);
+		//std::string line;
+		//while (std::getline(processingQueueFile, line)) {
+		//	std::istringstream iss(line);
+		//	ReservationInfo rInfo;
+		//	if (!(iss >> rInfo.uniqueid >> rInfo.date >> rInfo.court >> rInfo.time >> rInfo.reserveTime)) {
+		//		logger_.Warning("Failed to parse processing queue line: " + line);
+		//		continue;
+		//	}
+		//	std::scoped_lock queueLock(processingQueueMutex);
+		//	auto it = std::upper_bound(
+		//		ReservationProcessingQueue.begin(),
+		//		ReservationProcessingQueue.end(),
+		//		rInfo.reserveTime,
+		//		[](time_t t, const ReservationInfo& r) {
+		//			return t < r.reserveTime;
+		//		}
+		//	);
+		//	ReservationProcessingQueue.insert(it, std::move(rInfo));
+		//}
+		//processingQueueFile.clear();
+		//processingQueueFile.seekp(0, std::ios::end);
+		//return true;
+		/*
+		
+		auto records = dbConn.fetchAll("reservations_processing");
+		for (const auto& record : records) {
+			for (const auto& [key, value] : record) {
+				std::cout << key << ": " << value << std::endl;
 			}
+		}
+
+		*/
+
+		auto records = dbConnection_.fetchAll("reservations_processing");
+
+		if (records.empty()) return false;
+
+		for (const auto& record : records) {
+			ReservationInfo rInfo;
+			rInfo.uniqueid = record.at("unique_id");
+			rInfo.date = record.at("reservation_date");
+			rInfo.court = std::stoi(record.at("reservation_court"));
+			rInfo.time = std::stoi(record.at("reservation_time"));
+			rInfo.reserveTime = std::stoi(record.at("reservation_madetime"));
 			std::scoped_lock queueLock(processingQueueMutex);
 			auto it = std::upper_bound(
 				ReservationProcessingQueue.begin(),
@@ -492,98 +569,62 @@ private:
 					return t < r.reserveTime;
 				}
 			);
+			logger_.Info("Loaded processing reservation from database: " + rInfo.uniqueid);
 			ReservationProcessingQueue.insert(it, std::move(rInfo));
 		}
-		processingQueueFile.clear();
-		processingQueueFile.seekp(0, std::ios::end);
+
 		return true;
 	}
-	bool writeProcessingFile(const ReservationInfo& rInfo) {
-		std::scoped_lock lock(processingFileMutex);
-		if (!processingQueueFile.is_open()) return false;
-		processingQueueFile.clear();
-		processingQueueFile.seekp(0, std::ios::end);
+	bool addProcessing(const ReservationInfo& rInfo) {
+		std::map<std::string, std::string> writeVal;
+		writeVal["unique_id"] = rInfo.uniqueid;
+		writeVal["reservation_date"] = rInfo.date;
+		writeVal["reservation_court"] = std::to_string(rInfo.court);
+		writeVal["reservation_time"] = std::to_string(rInfo.time);
+		writeVal["reservation_madetime"] = std::to_string(rInfo.reserveTime);
 
-		std::ostringstream lineOss;
-		lineOss << rInfo.uniqueid << " " << rInfo.date << " " << rInfo.court << " " << rInfo.time << " " << rInfo.reserveTime;
-		const std::string line = lineOss.str();
+		int64_t newId = dbConnection_.insert("reservations_processing", writeVal);
+		logger_.Info("Insert database [reservations_processing]: " + std::to_string(newId));
 
-		processingQueueFile << line << "\n";
-		processingQueueFile.flush();
-		logger_.Info("Write file [processingQueue]: " + line);
-		return true;
+		return newId != -1;
 	}
-	bool removeProcessingFile(const std::string& uniqueid) {
-		std::scoped_lock lock(processingFileMutex);
-		if (!processingQueueFile.is_open()) return false;
-		std::vector<ReservationInfo> tempQueue;
-		std::string line;
-		processingQueueFile.clear();
-		processingQueueFile.seekg(0, std::ios::beg);
-		while (std::getline(processingQueueFile, line)) {
-			std::istringstream iss(line);
-			ReservationInfo rInfo;
-			if (!(iss >> rInfo.uniqueid >> rInfo.date >> rInfo.court >> rInfo.time >> rInfo.reserveTime)) {
-				logger_.Warning("Failed to parse processing queue line for deletion: " + line);
-				continue;
-			}
-			if (rInfo.uniqueid != uniqueid) {
-				tempQueue.push_back(std::move(rInfo));
-			}
-		}
-		processingQueueFile.close();
-		processingQueueFile.open("processingQueue", std::ios::trunc | std::ios::out);
-	   if (!processingQueueFile.is_open()) return false;
+	bool removeProcessing(const std::string& uniqueid) {
+        int deleted = dbConnection_.remove("reservations_processing", "unique_id = ?", { uniqueid });
+		logger_.Info("Delete database [reservations_processing]: " + std::to_string(deleted) + " rows affected, unique_id = " + uniqueid);
 
-		for (const auto& r : tempQueue) {
-			std::ostringstream lineOss;
-			lineOss << r.uniqueid << " " << r.date << " " << r.court << " " << r.time << " " << r.reserveTime;
-			const std::string writeLine = lineOss.str();
-
-			processingQueueFile << writeLine << "\n";
-			logger_.Info("Write file [processingQueue]: " + writeLine);
-		}
-
-		processingQueueFile.flush();
-		processingQueueFile.close();
-		processingQueueFile.open("processingQueue", std::ios::in | std::ios::out | std::ios::app);
-		if (!processingQueueFile.is_open()) return false;
-		return true;
+		return deleted != -1;
 	}
 	bool addFinishedFile(const OverdateReservationInfo& rInfo) {
-		std::scoped_lock lock(finishedFileMutex);
-		if (!finishedQueueFile.is_open()) return false;
-		finishedQueueFile.clear();
-		finishedQueueFile.seekp(0, std::ios::end);
+		std::map<std::string, std::string> writeVal;
+		writeVal["status"] = rInfo.status ? "1" : "0";
+		writeVal["reservation_date"] = rInfo.date;
+		writeVal["reservation_court"] = std::to_string(rInfo.court);
+		writeVal["reservation_time"] = std::to_string(rInfo.time);
+		writeVal["detailed"] = rInfo.info;
 
-		std::ostringstream lineOss;
-		lineOss << rInfo.status << " " << rInfo.date << " " << rInfo.court << " " << rInfo.time << " " << rInfo.reserveTime << " " << rInfo.info;
-		const std::string line = lineOss.str();
+		int64_t newId = dbConnection_.insert("reservations_finished", writeVal);
+		logger_.Info("Insert database [reservations_finished]: " + std::to_string(newId));
 
-		finishedQueueFile << line << "\n";
-		finishedQueueFile.flush();
-		logger_.Info("Write file [finishedQueue]: " + line);
-		return true;
+		return newId != -1;
 	}
-	bool readFinishedFile() {
-		std::scoped_lock fileLock(finishedFileMutex);
-		if (!finishedQueueFile.is_open()) return false;
-		finishedQueueFile.clear();
-		finishedQueueFile.seekg(0, std::ios::beg);
-		std::string line;
-		while (std::getline(finishedQueueFile, line)) {
-			std::istringstream iss(line);
+	bool readFinished() {
+		auto records = dbConnection_.fetchAll("reservations_finished");
+
+		if (records.empty()) return false;
+
+		for (const auto& record : records) {
 			OverdateReservationInfo rInfo;
-			if (!(iss >> rInfo.status >> rInfo.date >> rInfo.court >> rInfo.time >> rInfo.reserveTime)) {
-				logger_.Warning("Failed to parse finished queue line: " + line);
-				continue;
-			}
-		   std::getline(iss >> std::ws, rInfo.info);
+			rInfo.status = record.at("status") == "1";
+			rInfo.date = record.at("reservation_date");
+			rInfo.court = std::stoi(record.at("reservation_court"));
+			rInfo.time = std::stoi(record.at("reservation_time"));
+			rInfo.reserveTime = std::stoi(record.at("reservation_madetime"));
+			rInfo.info = record.at("detailed");
 			std::scoped_lock queueLock(finishedQueueMutex);
+			logger_.Info("Loaded finished reservation from database: " + rInfo.date + " court " + std::to_string(rInfo.court) + " time " + std::to_string(rInfo.time));
 			ReservationFinishQueue.push_back(std::move(rInfo));
 		}
-		finishedQueueFile.clear();
-		finishedQueueFile.seekp(0, std::ios::end);
+
 		return true;
 	}
 	std::string GenerateToken(std::string username, std::string password) {
@@ -740,14 +781,14 @@ private:
 
 		if (response["code"].asString() == "200") {
 			std::scoped_lock lock(pendingPaymentMutex);
-           ReservationPendingPaymentMap.clear();
+		   ReservationPendingPaymentMap.clear();
 			std::string uniqueid;
 			for (auto& it : response["data"]["rows"]) {
 				std::string date = it["date"].asString();
 				std::string court = "Court-" + it["areaId"].asString();
 				std::string time = it["startTime"].asString() + ":00-" + std::to_string(it["startTime"].asInt() + 1) + ":00";
 				std::string reservationId = it["reservationId"].asString();
-               uniqueid = Sha256::Hex(reservationId + date + court + time);
+			   uniqueid = Sha256::Hex(reservationId + date + court + time);
 				ReservationPendingPaymentMap[uniqueid] = { date, time, court, reservationId };
 			}
 		}

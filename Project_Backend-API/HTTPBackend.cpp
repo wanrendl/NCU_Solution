@@ -561,7 +561,8 @@ void HttpServer::HandleClient(SocketHandle clientSocket) {
 		return escaped;
 	};
 	const HttpRequest request = ParseRequest(rawRequest);
-	logger_.Info("Request body: " + escapePacketForLog(request.body));
+	if (!request.body.empty() && request.body.size() < 1024) logger_.Info("Request body: " + escapePacketForLog(request.body));
+	else if (request.body.size() >= 1024) logger_.Info("Request body: [large body of size " + std::to_string(request.body.size()) + " bytes]");
 	HttpResponse response(clientSocket);
 	logger_.Info("Request: method=" + request.method + " path=" + request.path);
 

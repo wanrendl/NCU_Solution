@@ -125,17 +125,21 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>E:\libraries\jsoncpp\jsoncpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>E:\libraries\MySQL\include;E:\libraries\jsoncpp\jsoncpp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>E:\libraries\MySQL\lib64\vs14;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="aes.cpp" />
+    <ClCompile Include="base64.h" />
     <ClCompile Include="basic.cpp" />
     <ClCompile Include="HTTPBackend.cpp" />
     <ClCompile Include="Logger.cpp" />
+    <ClCompile Include="ncmmeta.cpp" />
     <ClCompile Include="sha256.cpp" />
     <ClCompile Include="Source.cpp" />
   </ItemGroup>
@@ -145,19 +149,24 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="config.json" />
-    <None Include="finishedQueue" />
+    <None Include="convert.html" />
     <None Include="font-awesome.min.css" />
-    <None Include="index.html" />
-    <None Include="processingQueue" />
+    <None Include="html\convert.html" />
+    <None Include="html\reservation.html" />
+    <None Include="reservation.html" />
     <None Include="README-linux.md" />
     <None Include="tailwindcss.min.js" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="aes.h" />
     <ClInclude Include="basic.h" />
+    <ClInclude Include="databaseConnection.h" />
     <ClInclude Include="HTTPBackend.h" />
     <ClInclude Include="httplib.h" />
     <ClInclude Include="json.h" />
     <ClInclude Include="Logger.h" />
+    <ClInclude Include="Converter.h" />
+    <ClInclude Include="ncmmeta.h" />
     <ClInclude Include="NCUReservation.h" />
     <ClInclude Include="sha256.h" />
   </ItemGroup>

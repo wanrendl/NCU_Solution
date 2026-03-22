@@ -2,6 +2,7 @@
 
 ## General Guidelines
 - Use tab characters for indentation (not spaces) in this codebase.
+- Prefer modern C++ style implementations and avoid using `memcpy` when possible.
 
 ## 项目指南
 - 日志格式标准使用 `[date][level][threadnumber] info`，并且 `HttpServer` 构造时注入 `Logger` 实例，`main` 中定义 `Logger`。
@@ -10,3 +11,4 @@
 - 在进行文件写入时，需要在日志中输出写入的文件名和写入内容。
 - 服务端日志仅记录请求的 body 部分，不记录完整原始请求包。
 - 在待支付接口 `/api/pending/delete` 和 `/api/pending/pay` 的请求体中，`uniqueid` 应直接发送为字符串，不使用数组包装。
+- 在待转换列表中，删除与转换接口请求体应发送 `uniqueid`，不发送 `filename`。
