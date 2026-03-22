@@ -3,22 +3,16 @@
 
 #include "databaseConnection.h"
 #include "base64.h"
-#include "logger.h"
-#include "ncmmeta.h"
+#include "Logger.h"
 #include "sha256.h"
-#include <filesystem>
 #include <fstream>
-#include <iomanip>
-#include <json/json.h>
 #include <map>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <taglib/attachedpictureframe.h>
 #include <taglib/flacfile.h>
 #include <taglib/id3v2tag.h>
 #include <taglib/mpegfile.h>
-#include <taglib/tag.h>
 #include <taglib/tfile.h>
 
 class NeteaseConverter {
@@ -147,7 +141,7 @@ public:
 			auto itHash = record.find("unique_id");
 			auto itName = record.find("file_name");
 			if (itHash != record.end() && itName != record.end())
-				NCMPendingConvertFiles[itHash->second] = itName->second;
+                NCMPendingConvertFiles[itHash->second] = fromDbSafeText(itName->second);
 		}
 	}
 	
@@ -170,7 +164,7 @@ public:
 		std::map<std::string, std::string> writeVal;
 		writeVal["unique_id"] = hash;
 		writeVal["user_id"] = "";
-       writeVal["file_name"] = toDbSafeText(name);
+		writeVal["file_name"] = Base64::Encode(name);
 		writeVal["file_size"] = std::to_string(size);
 		int64_t newId = dbConnection_.insert("converter_pending", writeVal);
 		logger_.Info("Insert database [converter_pending]: " + std::to_string(newId));
@@ -194,28 +188,16 @@ public:
 	}
 	std::vector<std::map<std::string, std::string>> getConverterPending() {
 		auto records = dbConnection_.fetchAll("converter_pending");
-		for (auto& record : records) {
-			auto it = record.find("file_name");
-			if (it != record.end()) {
-				it->second = fromDbSafeText(it->second);
-			}
-		}
 		return records;
 	}
 	std::vector<std::map<std::string, std::string>> getConverted() {
 		auto records = dbConnection_.fetchAll("converter_finished");
-		for (auto& record : records) {
-			auto it = record.find("file_raw_name");
-			if (it != record.end()) {
-				it->second = fromDbSafeText(it->second);
-			}
-		}
 		return records;
 	}
 	bool addFinishedDatabase(std::string raw_name, std::string name, int format, std::string pictureHash, size_t fileSize) {
 		std::map<std::string, std::string> writeVal;
 		writeVal["user_id"] = "";
-		writeVal["file_raw_name"] = toDbSafeText(raw_name);
+		writeVal["file_raw_name"] = Base64::Encode(raw_name);
 		writeVal["file_name"] = name;
 		writeVal["picture_hash"] = pictureHash;
 		writeVal["file_size"] = std::to_string(fileSize);
@@ -228,6 +210,19 @@ public:
 		int deleted = dbConnection_.remove("converter_finished", "file_name = ?", { hash });
 		logger_.Info("Delete database [converter_finished]: " + std::to_string(deleted) + " rows affected, file_name = " + hash);
 		return deleted != -1;
+	}
+	bool addConfig(std::string config, std::string value) {
+		std::map<std::string, std::string> writeVal;
+		writeVal["config_key"] = config;
+		writeVal["config_value"] = value;
+		int64_t newId = dbConnection_.insert("config", writeVal);
+		logger_.Info("Insert database [config]: " + std::to_string(newId));
+		return newId != -1;
+	}
+	std::string getConfig(std::string config) {
+		auto record = dbConnection_.fetchOne("config", "config_key", config);
+		if (record.empty()) return "";
+		return record.at("config_value");
 	}
 };
 

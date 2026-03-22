@@ -171,15 +171,18 @@ void HttpServer::HttpResponse::SendFileDownload(const std::string& filePath, con
 	const std::string body{ std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
 	const std::string type = contentType.empty() ? GuessContentType(filePath) : contentType;
 
-	auto sanitizeAsciiFilename = [](const std::string& name) {
+	auto sanitizeUtf8FilenameForHeader = [](const std::string& name) {
 		std::string out;
 		out.reserve(name.size());
 		for (unsigned char c : name) {
-			if (c >= 0x20 && c <= 0x7E && c != '"' && c != '\\') {
-				out.push_back(static_cast<char>(c));
+			if (c == '"' || c == '\\' || c == '\r' || c == '\n') {
+				out.push_back('_');
+			}
+			else if (c < 0x20) {
+				out.push_back('_');
 			}
 			else {
-				out.push_back('_');
+				out.push_back(static_cast<char>(c));
 			}
 		}
 		if (out.empty()) out = "download.bin";
@@ -205,13 +208,13 @@ void HttpServer::HttpResponse::SendFileDownload(const std::string& filePath, con
 		return encoded;
 	};
 
-	const std::string asciiName = sanitizeAsciiFilename(downloadName);
+   const std::string utf8HeaderName = sanitizeUtf8FilenameForHeader(downloadName);
 	const std::string utf8Name = encodeRfc5987(downloadName);
 
 	const std::string response =
 		"HTTP/1.1 200 " + GetStatusText(200) + "\r\n"
 		"Content-Type: " + type + "\r\n"
-		"Content-Disposition: attachment; filename=\"" + asciiName + "\"; filename*=UTF-8''" + utf8Name + "\r\n"
+       "Content-Disposition: attachment; filename=\"" + utf8HeaderName + "\"; filename*=UTF-8''" + utf8Name + "\r\n"
 		"Content-Length: " + std::to_string(body.size()) + "\r\n"
 		"Connection: close\r\n\r\n" +
 		body;

@@ -560,8 +560,37 @@ public:
 			if (logger_) logger_->Error(std::string("fetchAll failed: ") + e.what());
 			result.clear();
 		}
-      catch (std::exception& e) {
+		catch (std::exception& e) {
 			if (logger_) logger_->Error(std::string("fetchAll failed: ") + e.what());
+			result.clear();
+		}
+		return result;
+	}
+
+	std::map<std::string, std::string> fetchOne(const std::string& table, const std::string& conditionColumn, const std::string& conditionValue) {
+		std::map<std::string, std::string> result;
+		auto conn = createConnection();
+		if (!conn) return result;
+		std::string sql = "SELECT * FROM " + table + " WHERE " + conditionColumn + " = '" + escapeString(conditionValue) + "' LIMIT 1";
+		try {
+			std::unique_ptr<sql::Statement> stmt(conn->createStatement());
+			std::unique_ptr<sql::ResultSet> res(stmt->executeQuery(sql));
+			if (res->next()) {
+				sql::ResultSetMetaData* meta = res->getMetaData();
+				int colCount = meta->getColumnCount();
+				for (int i = 1; i <= colCount; ++i) {
+					std::string colName = meta->getColumnName(i);
+					std::string value = res->getString(i);
+					result[colName] = value;
+				}
+			}
+		}
+		catch (sql::SQLException& e) {
+			if (logger_) logger_->Error(std::string("fetchOne failed: ") + e.what());
+			result.clear();
+		}
+		catch (std::exception& e) {
+			if (logger_) logger_->Error(std::string("fetchOne failed: ") + e.what());
 			result.clear();
 		}
 		return result;

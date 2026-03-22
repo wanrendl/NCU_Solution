@@ -12,7 +12,7 @@
 #include <mutex>
 #include <string_view>
 
-std::string Version = "v20260322-113000";
+std::string Version = "v20260322-132900";
 
 /*
 sudo apt update
@@ -34,18 +34,20 @@ ps -ef | grep Project_Backend-API
 */
 
 int main() {
+	std::cout << "Version: " << Version << std::endl;
 	try {
 		Logger logger;
 		logger.SetLogFile("server.log");
 		logger.EnableConsole(true);
 		Logger::SetCurrentThreadName("Thread-0");
 
-		DatabaseConnection dbConn("tcp://***:3306", "***", "***", "***");
+		DatabaseConnection dbConn("tcp://192.168.1.13:3306", "backend", "adgjl13579", "BackendProject");
 		dbConn.setLogger(logger);
 		dbConn.initialize();
 
 		ReservationManager reservation(logger, dbConn);
-		//reservation.begin();
+		reservation.setUsernamePassword(reservation.getConfig("username"), reservation.getConfig("password"));
+		reservation.begin();
 
 		NeteaseConverter nConverter(dbConn, logger);
 		nConverter.initialize();
@@ -336,6 +338,7 @@ int main() {
 				fileName = partHeaders.substr(fileNameStart, valueEnd - fileNameStart);
 			}
 
+
 			fileName = sanitizeFilename(fileName);
 			std::string ext = getLowerExt(fileName);
 
@@ -345,6 +348,8 @@ int main() {
 				res.SendJson(Json::FastWriter().write(responseJson), 400);
 				return;
 			}
+
+			if (fileName.size() >= 4 && fileName.substr(fileName.size() - 4) == ".ncm") fileName = fileName.substr(0, fileName.size() - 4);
 
 			const size_t fileDataStart = headersEnd + 4;
 			const size_t fileDataEnd = req.body.find("\r\n" + delimiter, fileDataStart);
@@ -397,7 +402,7 @@ int main() {
 			responseJson["message"] = "File uploaded successfully.";
 			responseJson["filename"] = fileName;
 
-			if (!nConverter.addPendingDatabase(fileName.substr(0, fileName.size() - 4), fileHash, fileContent.size())) {
+			if (!nConverter.addPendingDatabase(fileName, fileHash, fileContent.size())) {
 				responseJson["success"] = false;
 				responseJson["message"] = "Failed to add pending conversion to database.";
 				{
@@ -418,7 +423,8 @@ int main() {
 		auto handleConvertRefresh = [&nConverter](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value responseJson;
 			responseJson["success"] = true;
-			const auto pending = nConverter.getConverterPending();
+			auto pending = nConverter.getConverterPending();
+			std::reverse(pending.begin(), pending.end());
 			for (const auto& record : pending) {
 				if (record.at("status") == "1") continue;
 				Json::Value pendingJson;
@@ -575,7 +581,8 @@ int main() {
 		auto handleConvertedRefresh = [&nConverter](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value responseJson;
 			responseJson["success"] = true;
-			const auto converted = nConverter.getConverted();
+			auto converted = nConverter.getConverted();
+			std::reverse(converted.begin(), converted.end());
 			for (const auto& record : converted) {
 				Json::Value convertedJson;
 				convertedJson["filename"] = record.at("file_raw_name");
@@ -703,6 +710,18 @@ int main() {
 				return;
 			}
 
+         auto decodeBase64Name = [](const std::string& encoded) {
+				std::string source = encoded;
+				if (source.rfind("b64:", 0) == 0) {
+					source = source.substr(4);
+				}
+				std::string decoded;
+				if (Base64::Decode(source, decoded).empty()) {
+					return decoded;
+				}
+				return encoded;
+			};
+
 			std::string format;
           std::string rawName;
 			for (const auto& record : nConverter.getConverted()) {
@@ -771,6 +790,7 @@ int main() {
 				return true;
 			};
 
+            rawName = decodeBase64Name(rawName);
 			if (rawName.empty()) rawName = uniqueid;
 			std::string downloadName = rawName;
 			if (!endsWithIgnoreCase(downloadName, finalExt)) {

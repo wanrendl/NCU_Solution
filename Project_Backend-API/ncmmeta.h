@@ -1,13 +1,9 @@
 #ifndef _NCM_META_H_
 #define _NCM_META_H_
 
-#include "aes.h"
-#include "base64.h"
-#include <json/json.h>
-#include <iostream>
 #include <fstream>
 #include <filesystem>
-
+#include <json/json.h>
 
 class NeteaseMusicMetadata {
 

@@ -67,8 +67,8 @@ const std::string NCU_VenueReservation_Login = "http://ndyy.ncu.edu.cn:8089/cas/
 
 class ReservationManager {
 private:
-	const std::string username = "***";
-	const std::string password = "****-****";
+	std::string username;
+	std::string password;
 private:
 	Logger& logger_;
 	DatabaseConnection& dbConnection_;
@@ -122,6 +122,11 @@ public:
 				finishedQueueFile.close();
 			}
 		}
+	}
+
+	void setUsernamePassword(std::string newUsername, std::string newPassword) {
+		username = std::move(newUsername);
+		password = std::move(newPassword);
 	}
 
 	void enableAutoPay() {
@@ -292,6 +297,20 @@ public:
 		generateToken.store(true);
 	}
 
+	bool addConfig(std::string config, std::string value) {
+		std::map<std::string, std::string> writeVal;
+		writeVal["config_key"] = config;
+		writeVal["config_value"] = value;
+		int64_t newId = dbConnection_.insert("config", writeVal);
+		logger_.Info("Insert database [config]: " + std::to_string(newId));
+		return newId != -1;
+	}
+
+	std::string getConfig(std::string config) {
+		auto record = dbConnection_.fetchOne("config", "config_key", config);
+		if (record.empty()) return "";
+		return record.at("config_value");
+	}
 private:
 	void processOther() {
 		Logger::SetCurrentThreadName("Thread-Other");

@@ -46,6 +46,7 @@
 				</button>
 			</div>
 			<p id="upload-message" class="text-sm text-gray-500 mt-3">请选择文件后上传</p>
+          <div id="upload-progress-list" class="mt-3 space-y-2 hidden"></div>
 		</div>
 
 		<div class="bg-white rounded-xl shadow p-5 mb-6 card-hover">
@@ -119,6 +120,7 @@
 		const pendingRefreshBtn = document.getElementById('pending-refresh-btn');
 		const refreshBtn = document.getElementById('refresh-btn');
 		const uploadMessage = document.getElementById('upload-message');
+      const uploadProgressList = document.getElementById('upload-progress-list');
 		const pendingMessage = document.getElementById('pending-message');
 		const listMessage = document.getElementById('list-message');
 		const pendingFileList = document.getElementById('pending-file-list');
@@ -182,7 +184,29 @@
 		function resolveFileName(file) {
 			if (typeof file === 'string') return file;
 			if (!file || typeof file !== 'object') return '';
-			return String(file.name || file.fileName || file.filename || file.title || '');
+         const encoded = String(file.name || file.fileName || file.filename || file.title || '');
+            if (!encoded) return '';
+
+            const decodeBase64Utf8 = (base64Text) => {
+                try {
+                    const binary = atob(base64Text);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) {
+                        bytes[i] = binary.charCodeAt(i);
+                    }
+                    return new TextDecoder('utf-8').decode(bytes);
+                } catch (_) {
+                    return '';
+                }
+            };
+
+            if (encoded.startsWith('b64:')) {
+                const decoded = decodeBase64Utf8(encoded.slice(4));
+                return decoded || encoded;
+            }
+
+            const decoded = decodeBase64Utf8(encoded);
+            return decoded || encoded;
 		}
 
         function resolveFormat(file) {
@@ -316,10 +340,73 @@
             audio.dataset.role = 'audio-player';
             playerWrap.appendChild(audio);
 
+            const downloadProgressWrap = document.createElement('div');
+            downloadProgressWrap.className = 'hidden mt-3';
+            downloadProgressWrap.dataset.role = 'download-progress-wrap';
+
+            const downloadProgressTrack = document.createElement('div');
+            downloadProgressTrack.className = 'w-full h-2 bg-gray-200 rounded overflow-hidden';
+
+            const downloadProgressBar = document.createElement('div');
+            downloadProgressBar.className = 'h-full bg-green-600 transition-all';
+            downloadProgressBar.style.width = '0%';
+            downloadProgressBar.dataset.role = 'download-progress-bar';
+
+            downloadProgressTrack.appendChild(downloadProgressBar);
+
+            const downloadProgressText = document.createElement('p');
+            downloadProgressText.className = 'text-xs text-gray-500 mt-1';
+            downloadProgressText.dataset.role = 'download-progress-text';
+            downloadProgressText.textContent = '0%';
+
+            downloadProgressWrap.appendChild(downloadProgressTrack);
+            downloadProgressWrap.appendChild(downloadProgressText);
+
             item.appendChild(row);
             item.appendChild(playerWrap);
+            item.appendChild(downloadProgressWrap);
 			return item;
 		}
+
+        function setDownloadProgress(item, visible, percent, text, isError) {
+            if (!item) return;
+            const wrap = item.querySelector('[data-role="download-progress-wrap"]');
+            const bar = item.querySelector('[data-role="download-progress-bar"]');
+            const status = item.querySelector('[data-role="download-progress-text"]');
+            if (!wrap || !bar || !status) return;
+
+            if (!visible) {
+                wrap.classList.add('hidden');
+                bar.style.width = '0%';
+                status.textContent = '0%';
+                status.classList.remove('text-red-600', 'text-green-600');
+                status.classList.add('text-gray-500');
+                bar.classList.remove('bg-red-600');
+                bar.classList.add('bg-green-600');
+                return;
+            }
+
+            wrap.classList.remove('hidden');
+            const p = Math.max(0, Math.min(100, Number(percent) || 0));
+            bar.style.width = `${p.toFixed(1)}%`;
+            status.textContent = text || `${p.toFixed(1)}%`;
+            status.classList.remove('text-gray-500', 'text-red-600', 'text-green-600');
+            if (isError) {
+                status.classList.add('text-red-600');
+                bar.classList.remove('bg-green-600');
+                bar.classList.add('bg-red-600');
+                return;
+            }
+            if (p >= 100) {
+                status.classList.add('text-green-600');
+                bar.classList.remove('bg-red-600');
+                bar.classList.add('bg-green-600');
+                return;
+            }
+            status.classList.add('text-gray-500');
+            bar.classList.remove('bg-red-600');
+            bar.classList.add('bg-green-600');
+        }
 
         async function toggleConvertedAudio(item, triggerElement) {
             if (!item) return;
@@ -510,6 +597,99 @@
 			}
 		}
 
+        function createUploadProgressItem(fileName) {
+            const item = document.createElement('div');
+            item.className = 'bg-gray-50 border border-gray-200 rounded-lg p-2';
+
+            const topRow = document.createElement('div');
+            topRow.className = 'flex items-center justify-between gap-2 text-xs';
+
+            const name = document.createElement('span');
+            name.className = 'text-gray-700 truncate';
+            name.textContent = fileName || '(未知文件名)';
+
+            const status = document.createElement('span');
+            status.className = 'text-gray-500 shrink-0';
+            status.textContent = '等待上传';
+
+            topRow.appendChild(name);
+            topRow.appendChild(status);
+
+            const track = document.createElement('div');
+            track.className = 'w-full h-2 bg-gray-200 rounded mt-1 overflow-hidden';
+
+            const bar = document.createElement('div');
+            bar.className = 'h-full bg-blue-600 transition-all';
+            bar.style.width = '0%';
+
+            track.appendChild(bar);
+            item.appendChild(topRow);
+            item.appendChild(track);
+
+            uploadProgressList.appendChild(item);
+            return { item, status, bar };
+        }
+
+        function updateUploadProgressItem(progressItem, percent, statusText, isError) {
+            if (!progressItem) return;
+            const value = Math.max(0, Math.min(100, Number(percent) || 0));
+            progressItem.bar.style.width = `${value.toFixed(1)}%`;
+            progressItem.status.textContent = statusText || `${value.toFixed(1)}%`;
+            progressItem.status.classList.remove('text-gray-500', 'text-green-600', 'text-red-600');
+            if (isError) {
+                progressItem.status.classList.add('text-red-600');
+                progressItem.bar.classList.remove('bg-blue-600', 'bg-green-600');
+                progressItem.bar.classList.add('bg-red-600');
+                return;
+            }
+            if (value >= 100) {
+                progressItem.status.classList.add('text-green-600');
+                progressItem.bar.classList.remove('bg-blue-600', 'bg-red-600');
+                progressItem.bar.classList.add('bg-green-600');
+                return;
+            }
+            progressItem.status.classList.add('text-gray-500');
+            progressItem.bar.classList.remove('bg-green-600', 'bg-red-600');
+            progressItem.bar.classList.add('bg-blue-600');
+        }
+
+        function uploadSingleFileWithProgress(file, onProgress) {
+            return new Promise((resolve, reject) => {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', API_ENDPOINTS.upload, true);
+                xhr.withCredentials = true;
+
+                xhr.upload.onprogress = (event) => {
+                    if (!event.lengthComputable || typeof onProgress !== 'function') return;
+                    onProgress(event.loaded, event.total);
+                };
+
+                xhr.onload = () => {
+                    let result = null;
+                    try {
+                        result = JSON.parse(xhr.responseText || '{}');
+                    } catch (_) {
+                        result = null;
+                    }
+                    if (xhr.status < 200 || xhr.status >= 300) {
+                        reject(new Error((result && result.message) || `上传失败: ${file.name}`));
+                        return;
+                    }
+                    if (result && result.success === false) {
+                        reject(new Error(result.message || `上传失败: ${file.name}`));
+                        return;
+                    }
+                    resolve(result || {});
+                };
+
+                xhr.onerror = () => reject(new Error(`上传失败: ${file.name}`));
+                xhr.send(formData);
+            });
+        }
+
 		async function uploadFiles() {
 			const files = Array.from(uploadInput.files || []);
 			if (files.length === 0) {
@@ -517,64 +697,84 @@
 				return;
 			}
 
-			setButtonLoading(uploadBtn, true, '上传中...');
-			try {
-				for (const file of files) {
-					const formData = new FormData();
-					formData.append('file', file);
-					const response = await fetch(API_ENDPOINTS.upload, {
-						method: 'POST',
-						body: formData,
-						credentials: 'same-origin',
-						cache: 'no-cache'
-					});
-					let result = null;
-					try {
-						result = await response.json();
-					} catch (_) {
-						result = null;
-					}
-					if (!response.ok) throw new Error((result && result.message) || `上传失败: ${file.name}`);
-					if (result && result.success === false) throw new Error(result.message || `上传失败: ${file.name}`);
-				}
-				uploadInput.value = '';
-				setMessage(uploadMessage, 'success', '上传成功');
-				await refreshPendingFileList();
-			} catch (error) {
-				setMessage(uploadMessage, 'error', error.message || '上传失败');
-			} finally {
-				setButtonLoading(uploadBtn, false, '上传中...');
-			}
+            setButtonLoading(uploadBtn, true, '上传中...');
+            uploadProgressList.innerHTML = '';
+            uploadProgressList.classList.remove('hidden');
+            let hasError = false;
+
+            try {
+                for (const file of files) {
+                    const progressItem = createUploadProgressItem(file.name);
+                    updateUploadProgressItem(progressItem, 0, '上传中 0.0%', false);
+
+                    try {
+                        await uploadSingleFileWithProgress(file, (loaded, total) => {
+                            const percent = total > 0 ? (loaded / total) * 100 : 0;
+                            updateUploadProgressItem(progressItem, percent, `上传中 ${percent.toFixed(1)}%`, false);
+                        });
+                        updateUploadProgressItem(progressItem, 100, '上传完成', false);
+                    } catch (error) {
+                        hasError = true;
+                        updateUploadProgressItem(progressItem, 100, error.message || '上传失败', true);
+                    }
+                }
+
+                uploadInput.value = '';
+                if (hasError) {
+                    setMessage(uploadMessage, 'error', '部分文件上传失败');
+                } else {
+                    setMessage(uploadMessage, 'success', '上传成功');
+                }
+                await refreshPendingFileList();
+            } finally {
+                setButtonLoading(uploadBtn, false, '上传中...');
+            }
 		}
 
-     async function downloadFile(uniqueId, fileName, triggerBtn) {
+      async function downloadFile(uniqueId, fileName, triggerBtn, item) {
             if (!uniqueId) {
                 setMessage(listMessage, 'error', 'uniqueid无效');
 				return;
 			}
 
 			setButtonLoading(triggerBtn, true, '下载中...');
+           setDownloadProgress(item, true, 0, '下载中 0.0%', false);
 			try {
-				const response = await fetch(API_ENDPOINTS.download, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-                   body: JSON.stringify({ uniqueid: uniqueId }),
-					credentials: 'same-origin',
-					cache: 'no-cache'
-				});
-				if (!response.ok) {
-					let err = '下载失败';
-					try {
-						const errorJson = await response.json();
-						err = (errorJson && errorJson.message) || err;
-					} catch (_) {}
-					throw new Error(err);
-				}
+              const downloadResult = await new Promise((resolve, reject) => {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('POST', API_ENDPOINTS.download, true);
+                    xhr.withCredentials = true;
+                    xhr.responseType = 'blob';
+                    xhr.setRequestHeader('Content-Type', 'application/json');
 
-				const blob = await response.blob();
-				const disposition = response.headers.get('content-disposition') || '';
-				const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
-				const finalName = decodeURIComponent((match && (match[1] || match[2])) || fileName);
+                    xhr.onprogress = (event) => {
+                        if (!event.lengthComputable) {
+                            setDownloadProgress(item, true, 0, '下载中...', false);
+                            return;
+                        }
+                        const percent = (event.loaded / event.total) * 100;
+                        setDownloadProgress(item, true, percent, `下载中 ${percent.toFixed(1)}%`, false);
+                    };
+
+                    xhr.onload = () => {
+                        if (xhr.status < 200 || xhr.status >= 300) {
+                            reject(new Error('下载失败'));
+                            return;
+                        }
+                        resolve({
+                            blob: xhr.response,
+                            disposition: xhr.getResponseHeader('content-disposition') || ''
+                        });
+                    };
+
+                    xhr.onerror = () => reject(new Error('下载失败'));
+                    xhr.send(JSON.stringify({ uniqueid: uniqueId }));
+                });
+
+                const blob = downloadResult.blob;
+                const disposition = downloadResult.disposition;
+                const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+                const finalName = decodeURIComponent((match && (match[1] || match[2])) || fileName);
 				const url = URL.createObjectURL(blob);
 				const a = document.createElement('a');
 				a.href = url;
@@ -583,11 +783,14 @@
 				a.click();
 				a.remove();
 				URL.revokeObjectURL(url);
+             setDownloadProgress(item, true, 100, '下载完成', false);
 				setMessage(listMessage, 'success', '下载成功');
 			} catch (error) {
+              setDownloadProgress(item, true, 100, error.message || '下载失败', true);
 				setMessage(listMessage, 'error', error.message || '下载失败');
 			} finally {
 				setButtonLoading(triggerBtn, false, '下载中...');
+               setTimeout(() => setDownloadProgress(item, false, 0, '0%', false), 1200);
 			}
 		}
 
@@ -661,7 +864,7 @@
             }
 
 			if (action === 'download') {
-              downloadFile(uniqueId, fileName, actionBtn);
+              downloadFile(uniqueId, fileName, actionBtn, item);
 				return;
 			}
 			if (action === 'delete') {
