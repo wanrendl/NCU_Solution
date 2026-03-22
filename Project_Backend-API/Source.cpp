@@ -40,12 +40,12 @@ int main() {
 		logger.EnableConsole(true);
 		Logger::SetCurrentThreadName("Thread-0");
 
-		DatabaseConnection dbConn("tcp://***:3306", "**", "**", "***");
+		DatabaseConnection dbConn("tcp://***:3306", "***", "***", "***");
 		dbConn.setLogger(logger);
 		dbConn.initialize();
 
 		ReservationManager reservation(logger, dbConn);
-		reservation.begin();
+		//reservation.begin();
 
 		NeteaseConverter nConverter(dbConn, logger);
 		nConverter.initialize();
@@ -696,7 +696,7 @@ int main() {
 			Json::Value requestJson = ReadJsonFromString(req.body);
 			std::string uniqueid = requestJson["uniqueid"].asString();
 			Json::Value responseJson;
-           if (uniqueid.empty()) {
+			if (uniqueid.empty()) {
 				responseJson["success"] = false;
 				responseJson["message"] = "Invalid uniqueid.";
 				res.SendJson(Json::FastWriter().write(responseJson), 400);
@@ -704,11 +704,14 @@ int main() {
 			}
 
 			std::string format;
+          std::string rawName;
 			for (const auto& record : nConverter.getConverted()) {
 				auto itUnique = record.find("file_name");
 				auto itFormat = record.find("file_format");
+             auto itRawName = record.find("file_raw_name");
 				if (itUnique != record.end() && itFormat != record.end() && itUnique->second == uniqueid) {
 					format = itFormat->second;
+                  if (itRawName != record.end()) rawName = itRawName->second;
 					break;
 				}
 			}
@@ -740,17 +743,41 @@ int main() {
 
 			if (convertedFilePath.empty()) {
 				responseJson["success"] = false;
-              responseJson["message"] = "Converted file not found.";
+                responseJson["message"] = "Converted file not found.";
 				res.SendJson(Json::FastWriter().write(responseJson), 404);
 				return;
 			}
 
 			std::string contentType = "application/octet-stream";
-			const auto ext = convertedFilePath.extension().string();
-			if (ext == ".mp3" || lowerFormat == "mp3") contentType = "audio/mpeg";
-			else if (ext == ".flac" || lowerFormat == "flac") contentType = "audio/flac";
+            std::string finalExt = ".mp3";
+			if (lowerFormat == "flac") {
+				finalExt = ".flac";
+				contentType = "audio/flac";
+			}
+			else {
+				finalExt = ".mp3";
+				contentType = "audio/mpeg";
+			}
 
-			res.SendFile(convertedFilePath.string(), contentType);
+			auto endsWithIgnoreCase = [](const std::string& text, const std::string& suffix) {
+				if (suffix.size() > text.size()) return false;
+				auto itText = text.end() - static_cast<std::ptrdiff_t>(suffix.size());
+				for (size_t i = 0; i < suffix.size(); ++i) {
+					if (std::tolower(static_cast<unsigned char>(*(itText + static_cast<std::ptrdiff_t>(i)))) !=
+						std::tolower(static_cast<unsigned char>(suffix[i]))) {
+						return false;
+					}
+				}
+				return true;
+			};
+
+			if (rawName.empty()) rawName = uniqueid;
+			std::string downloadName = rawName;
+			if (!endsWithIgnoreCase(downloadName, finalExt)) {
+				downloadName += finalExt;
+			}
+
+          res.SendFileDownload(convertedFilePath.string(), downloadName, contentType);
 			};
 		auto handleConvertedCover = [&nConverter](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value responseJson, requestJson = ReadJsonFromString(req.body);

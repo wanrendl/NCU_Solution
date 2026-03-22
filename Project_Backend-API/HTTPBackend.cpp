@@ -161,6 +161,65 @@ void HttpServer::HttpResponse::SendFile(const std::string& filePath, const std::
 	Send(200, type, body);
 }
 
+void HttpServer::HttpResponse::SendFileDownload(const std::string& filePath, const std::string& downloadName, const std::string& contentType) {
+	std::ifstream file(filePath, std::ios::binary);
+	if (!file) {
+		SendText("File Not Found", 404);
+		return;
+	}
+
+	const std::string body{ std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
+	const std::string type = contentType.empty() ? GuessContentType(filePath) : contentType;
+
+	auto sanitizeAsciiFilename = [](const std::string& name) {
+		std::string out;
+		out.reserve(name.size());
+		for (unsigned char c : name) {
+			if (c >= 0x20 && c <= 0x7E && c != '"' && c != '\\') {
+				out.push_back(static_cast<char>(c));
+			}
+			else {
+				out.push_back('_');
+			}
+		}
+		if (out.empty()) out = "download.bin";
+		return out;
+	};
+
+	auto encodeRfc5987 = [](const std::string& value) {
+		static const char* hex = "0123456789ABCDEF";
+		std::string encoded;
+		for (unsigned char c : value) {
+			const bool safe =
+				(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+				c == '-' || c == '.' || c == '_' || c == '~';
+			if (safe) {
+				encoded.push_back(static_cast<char>(c));
+			}
+			else {
+				encoded.push_back('%');
+				encoded.push_back(hex[(c >> 4) & 0x0F]);
+				encoded.push_back(hex[c & 0x0F]);
+			}
+		}
+		return encoded;
+	};
+
+	const std::string asciiName = sanitizeAsciiFilename(downloadName);
+	const std::string utf8Name = encodeRfc5987(downloadName);
+
+	const std::string response =
+		"HTTP/1.1 200 " + GetStatusText(200) + "\r\n"
+		"Content-Type: " + type + "\r\n"
+		"Content-Disposition: attachment; filename=\"" + asciiName + "\"; filename*=UTF-8''" + utf8Name + "\r\n"
+		"Content-Length: " + std::to_string(body.size()) + "\r\n"
+		"Connection: close\r\n\r\n" +
+		body;
+
+	SendAll(response.data(), response.size());
+	sent_ = true;
+}
+
 bool HttpServer::HttpResponse::HasSent() const noexcept {
 	return sent_;
 }

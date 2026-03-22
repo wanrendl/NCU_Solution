@@ -55,6 +55,7 @@ public:
 		void SendJson(std::string_view json, int statusCode = 200);
 		void SendStatusDescription(int statusCode);
 		void SendFile(const std::string& filePath, const std::string& contentType = "");
+        void SendFileDownload(const std::string& filePath, const std::string& downloadName, const std::string& contentType = "application/octet-stream");
 		[[nodiscard]] bool HasSent() const noexcept;
 
 	private:
