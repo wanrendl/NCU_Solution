@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="./icon.png" type="image/png" />
+    <title>主页</title>
+    <script src="./tailwindcss.min.js"></script>
+    <link href="./font-awesome.min.css" rel="stylesheet">
+    <style>
+        .card-hover {
+            transition: all 0.25s ease;
+        }
+
+        .card-hover:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen m-0 p-0">
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <div class="bg-white rounded-xl shadow p-5 mb-6 card-hover">
+            <div class="flex items-center justify-between">
+                <h1 class="text-2xl font-semibold text-gray-800">服务主页</h1>
+                <div id="auth-area" class="flex items-center gap-2"></div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button id="go-convert" type="button" class="bg-white rounded-xl shadow p-5 card-hover text-left border border-gray-200">
+                <div class="text-xl font-semibold text-gray-800 flex items-center">
+                    <i class="fa fa-files-o text-indigo-600 mr-2"></i>Convert
+                </div>
+                <p class="text-sm text-gray-500 mt-2">音频转换与文件管理服务</p>
+            </button>
+
+            <button id="go-reservation" type="button" class="bg-white rounded-xl shadow p-5 card-hover text-left border border-gray-200">
+                <div class="text-xl font-semibold text-gray-800 flex items-center">
+                    <i class="fa fa-calendar-check-o text-blue-600 mr-2"></i>Reservation
+                </div>
+                <p class="text-sm text-gray-500 mt-2">场地预约管理服务</p>
+            </button>
+        </div>
+
+        <div id="user-management-section" class="bg-white rounded-xl shadow p-5 mt-6 card-hover">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-xl font-semibold text-gray-800 flex items-center">
+                    <i class="fa fa-user-circle text-red-600 mr-2"></i>用户管理
+                </h2>
+                <span id="account-message" class="text-sm text-gray-500"></span>
+            </div>
+            <p class="text-sm text-gray-600 mb-3">管理用户信息。</p>
+            <button id="delete-account-btn" type="button" class="text-sm bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition">
+                <i class="fa fa-trash mr-1"></i>删除账户
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const authArea = document.getElementById('auth-area');
+        const goConvert = document.getElementById('go-convert');
+        const goReservation = document.getElementById('go-reservation');
+        const userManagementSection = document.getElementById('user-management-section');
+        const deleteAccountBtn = document.getElementById('delete-account-btn');
+        const accountMessage = document.getElementById('account-message');
+
+        function setAccountMessage(text, isError = false) {
+            accountMessage.classList.remove('text-gray-500', 'text-red-600', 'text-green-600');
+            accountMessage.classList.add(isError ? 'text-red-600' : 'text-green-600');
+            accountMessage.textContent = text || '';
+        }
+
+        function getToken() {
+            return localStorage.getItem('authToken') || '';
+        }
+
+        function getUsername() {
+            return localStorage.getItem('authUsername') || '';
+        }
+
+        function renderAuthArea() {
+            authArea.innerHTML = '';
+            const token = getToken();
+            const username = getUsername();
+
+            if (token && username) {
+                userManagementSection.classList.remove('hidden');
+                document.cookie = `authToken=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
+                const userTag = document.createElement('span');
+                userTag.className = 'inline-block px-3 py-1 text-sm rounded border border-green-500 text-green-700 bg-green-50';
+                userTag.textContent = username;
+                authArea.appendChild(userTag);
+
+             const logoutBtn = document.createElement('button');
+                logoutBtn.type = 'button';
+                logoutBtn.className = 'text-sm bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg transition';
+                logoutBtn.innerHTML = '<i class="fa fa-sign-out mr-1"></i>退出登录';
+                logoutBtn.addEventListener('click', async () => {
+                    try {
+                        await fetch('/api/logout', {
+                            method: 'POST',
+                            headers: { 'X-Token': token },
+                            credentials: 'same-origin'
+                        });
+                    } catch (_) {}
+                    localStorage.removeItem('authToken');
+                    localStorage.removeItem('authUsername');
+                    document.cookie = 'authToken=; path=/; Max-Age=0; SameSite=Lax';
+                    renderAuthArea();
+                 setAccountMessage('已退出登录。');
+                });
+                authArea.appendChild(logoutBtn);
+                return;
+            }
+
+            userManagementSection.classList.add('hidden');
+            accountMessage.textContent = '';
+            document.cookie = 'authToken=; path=/; Max-Age=0; SameSite=Lax';
+            const loginBtn = document.createElement('button');
+            loginBtn.type = 'button';
+            loginBtn.className = 'text-sm bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition';
+            loginBtn.innerHTML = '<i class="fa fa-sign-in mr-1"></i>登录';
+            loginBtn.addEventListener('click', () => { window.location.href = '/login'; });
+            authArea.appendChild(loginBtn);
+
+            const registerBtn = document.createElement('button');
+            registerBtn.type = 'button';
+            registerBtn.className = 'text-sm bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition';
+            registerBtn.innerHTML = '<i class="fa fa-user-plus mr-1"></i>注册';
+            registerBtn.addEventListener('click', () => { window.location.href = '/register'; });
+            authArea.appendChild(registerBtn);
+        }
+
+        function requireLoginThenNavigate(path) {
+            const token = getToken();
+            if (!token) {
+                window.location.href = '/login';
+                return;
+            }
+            document.cookie = `authToken=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
+            window.location.href = path;
+        }
+
+        goConvert.addEventListener('click', () => requireLoginThenNavigate('/convert'));
+        goReservation.addEventListener('click', () => requireLoginThenNavigate('/reservation'));
+        deleteAccountBtn.addEventListener('click', async () => {
+            const token = getToken();
+            if (!token) {
+                window.location.href = '/login';
+                return;
+            }
+            const ok = window.confirm('删除账户将永久移除账号信息，是否继续？');
+            if (!ok) return;
+
+            try {
+                const resp = await fetch('/api/account/delete', {
+                    method: 'POST',
+                    headers: { 'X-Token': token },
+                    credentials: 'same-origin'
+                });
+                const result = await resp.json();
+                if (!resp.ok || !result.success) {
+                    setAccountMessage((result && result.message) || '删除账户失败。', true);
+                    return;
+                }
+                localStorage.removeItem('authToken');
+                localStorage.removeItem('authUsername');
+                document.cookie = 'authToken=; path=/; Max-Age=0; SameSite=Lax';
+                setAccountMessage('账户已删除。');
+                renderAuthArea();
+                setTimeout(() => { window.location.href = '/register'; }, 500);
+            } catch (_) {
+                setAccountMessage('删除账户失败。', true);
+            }
+        });
+
+        renderAuthArea();
+    </script>
+</body>
+</html>

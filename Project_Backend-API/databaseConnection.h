@@ -133,7 +133,7 @@ public:
 			if (logger_) logger_->Info("Database '" + dbName_ + "' exists.");
 
 			const std::map<std::string, std::vector<std::string>> requiredSchema = {
-				{"user_info", {"id", "username", "password", "email", "created_at"}},
+				{"user_info", {"id", "username", "password", "authority_level", "created_at"}},
 				{"config", {"id", "config_key", "config_value", "updated_at"}},
 				{"reservations_processing", {"unique_id", "reservation_madetime", "reservation_court", "reservation_date", "reservation_time"}},
 				{"reservations_finished", {"id", "status", "reservation_court", "reservation_date", "reservation_time", "details", "finished_at"}},
@@ -359,6 +359,14 @@ public:
 		std::string sql = "SELECT 1 FROM " + table +
 			" WHERE " + conditionColumn + " = '" + escapeString(conditionValue) + "'" +
 			" AND " + statusColumn + " = '" + escapeString(statusValue) + "' LIMIT 1";
+		auto res = query(sql);
+		return res && res->next();
+	}
+
+	bool searchExistsUser(const std::string& table, const std::string& username, const std::string& password) {
+		std::string sql = "SELECT 1 FROM " + table +
+			" WHERE username = '" + escapeString(username) + "'" +
+			" AND password = '" + escapeString(password) + "' LIMIT 1";
 		auto res = query(sql);
 		return res && res->next();
 	}
@@ -655,12 +663,13 @@ private:
 		std::unique_ptr<sql::Statement> stmt(conn->createStatement());
 
 		// 1. 用户表
+		// authority_level: 1=管理员, 0=普通用户, -1=禁用用户, 2=服务器所有者
 		std::string sql_user = R"(
 			CREATE TABLE IF NOT EXISTS user_info (
 				id INT AUTO_INCREMENT PRIMARY KEY,
 				username VARCHAR(50) NOT NULL UNIQUE,
-				password VARCHAR(255) NOT NULL,
-				email VARCHAR(100) NOT NULL,
+				password VARCHAR(64) NOT NULL,
+				authority_level TINYINT DEFAULT 0,
 				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 		)";

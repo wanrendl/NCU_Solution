@@ -91,14 +91,10 @@ private:
 	std::mutex finishedQueueMutex;
 	std::mutex pendingPaymentMutex;
 	std::mutex tokenMutex;
-	std::mutex processingFileMutex;
-	std::mutex finishedFileMutex;
 	std::mutex loginInfoMutex;
-	std::fstream processingQueueFile;
-	std::fstream finishedQueueFile;
 public:
-	explicit ReservationManager(Logger& logger, DatabaseConnection& dbConnection)
-		: logger_(logger), dbConnection_(dbConnection) {
+	explicit ReservationManager(DatabaseConnection& dbConnection, Logger& logger)
+		: dbConnection_(dbConnection), logger_(logger) {
 	}
 
 	~ReservationManager() {
@@ -109,18 +105,6 @@ public:
 		}
 		if (otherProcessThread_.joinable()) {
 			otherProcessThread_.join();
-		}
-		{
-			std::scoped_lock lock(processingFileMutex);
-			if (processingQueueFile.is_open()) {
-				processingQueueFile.close();
-			}
-		}
-		{
-			std::scoped_lock lock(finishedFileMutex);
-			if (finishedQueueFile.is_open()) {
-				finishedQueueFile.close();
-			}
 		}
 	}
 
@@ -286,14 +270,12 @@ public:
 			logger_.Warning("Reservation manager has already started.");
 			return;
 		}
-		processingQueueFile.open("processingQueue", std::ios::in | std::ios::out | std::ios::app);
-		finishedQueueFile.open("finishedQueue", std::ios::in | std::ios::out | std::ios::app);
 		readProcessing();
 		readFinished();
 		logger_.Info("Reservation manager is starting background workers.");
 		reserveProcessThread_ = std::thread(&ReservationManager::processReservation, this);
 		otherProcessThread_ = std::thread(&ReservationManager::processOther, this);
-	  tokenReady.store(false);
+		tokenReady.store(false);
 		generateToken.store(true);
 	}
 

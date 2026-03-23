@@ -5,12 +5,14 @@
 #include "json.h"
 #include "ncmmeta.h"
 #include "NCUReservation.h"
+#include "tokenManagement.h"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <string_view>
+#include <vector>
 
 std::string Version = "v20260322-132900";
 
@@ -45,15 +47,144 @@ int main() {
 		dbConn.setLogger(logger);
 		dbConn.initialize();
 
-		ReservationManager reservation(logger, dbConn);
+		ReservationManager reservation(dbConn, logger);
 		reservation.setUsernamePassword(reservation.getConfig("username"), reservation.getConfig("password"));
 		reservation.begin();
 
 		NeteaseConverter nConverter(dbConn, logger);
 		nConverter.initialize();
 
+		userManagement userManager(dbConn);
+		userManager.initialize();
+
 		HttpServer server(8027, logger);
 		std::mutex convertRawFileMutex;
+		if (!userManager.initializeLoginSecurity()) {
+			throw std::runtime_error("Failed to initialize login security context.");
+		}
+
+		auto getHeaderIgnoreCase = [](const HttpServer::HttpRequest& req, const std::string& name) -> std::string {
+			std::string lowerName = name;
+			std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
+				return static_cast<char>(std::tolower(c));
+				});
+			for (const auto& [k, v] : req.headers) {
+				std::string lowerKey = k;
+				std::transform(lowerKey.begin(), lowerKey.end(), lowerKey.begin(), [](unsigned char c) {
+					return static_cast<char>(std::tolower(c));
+					});
+				if (lowerKey == lowerName) return v;
+			}
+			return "";
+		};
+
+        auto getCookieValue = [&](const HttpServer::HttpRequest& req, const std::string& key) -> std::string {
+			const std::string cookieHeader = getHeaderIgnoreCase(req, "Cookie");
+			if (cookieHeader.empty()) return "";
+
+			size_t start = 0;
+			while (start < cookieHeader.size()) {
+				const size_t end = cookieHeader.find(';', start);
+				const std::string part = cookieHeader.substr(start, end == std::string::npos ? std::string::npos : end - start);
+				const size_t eqPos = part.find('=');
+				if (eqPos != std::string::npos) {
+					std::string name = part.substr(0, eqPos);
+					std::string value = part.substr(eqPos + 1);
+					while (!name.empty() && std::isspace(static_cast<unsigned char>(name.front()))) name.erase(name.begin());
+					while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
+					if (name == key) return value;
+				}
+				if (end == std::string::npos) break;
+				start = end + 1;
+			}
+			return "";
+		};
+
+		auto isAuthorized = [&](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) -> bool {
+			std::string token = getHeaderIgnoreCase(req, "X-Token");
+			if (token.empty()) {
+				const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+				if (authHeader.rfind("Bearer ", 0) == 0) {
+					token = authHeader.substr(7);
+				}
+			}
+			if (token.empty()) {
+                token = getCookieValue(req, "authToken");
+			}
+			if (token.empty() || !userManager.checkTokenValidation(token)) {
+				Json::Value responseJson;
+				responseJson["success"] = false;
+				responseJson["message"] = "Invalid or missing token.";
+				res.SendJson(Json::FastWriter().write(responseJson), 401);
+				return false;
+			}
+			return true;
+		};
+
+		auto withAuth = [&](auto handler) {
+			return [&, handler](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+				if (!isAuthorized(req, res)) return;
+				handler(req, res);
+			};
+		};
+
+		std::mutex inviteCodeMutex;
+		auto consumeInviteCode = [&](const std::string& registerCode, std::string& info, bool& internalError) -> bool {
+			internalError = false;
+			if (registerCode.empty()) {
+				info = "Missing register code.";
+				return false;
+			}
+
+			auto trim = [](std::string value) {
+				while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) value.erase(value.begin());
+				while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) value.pop_back();
+				return value;
+			};
+
+			std::scoped_lock lock(inviteCodeMutex);
+			std::ifstream inputFile("InviteCode.txt");
+			if (!inputFile.is_open()) {
+				internalError = true;
+				info = "Failed to open InviteCode.txt.";
+				return false;
+			}
+
+			std::vector<std::string> remainingCodes;
+			std::string line;
+			bool consumed = false;
+			while (std::getline(inputFile, line)) {
+				const std::string code = trim(line);
+				if (code.empty()) continue;
+				if (!consumed && code == registerCode) {
+					consumed = true;
+					continue;
+				}
+				remainingCodes.push_back(code);
+			}
+			inputFile.close();
+
+			if (!consumed) {
+				info = "Invalid or used register code.";
+				return false;
+			}
+
+			std::ofstream outputFile("InviteCode.txt", std::ios::trunc);
+			if (!outputFile.is_open()) {
+				internalError = true;
+				info = "Failed to update InviteCode.txt.";
+				return false;
+			}
+
+			for (size_t i = 0; i < remainingCodes.size(); i += 1) {
+				outputFile << remainingCodes[i];
+				if (i + 1 < remainingCodes.size()) outputFile << '\n';
+			}
+			outputFile.close();
+
+			info = "Invite code accepted.";
+			return true;
+		};
 
 		auto handleReservationTaskAdd = [&reservation](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value requestJson = ReadJsonFromString(req.body);
@@ -230,8 +361,24 @@ int main() {
 			
 		};
 
-		auto handleConvertUpload = [&logger, &nConverter, &convertRawFileMutex](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+        auto handleConvertUpload = [&logger, &nConverter, &convertRawFileMutex, &userManager, &getHeaderIgnoreCase](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value responseJson;
+			std::string uploader;
+			{
+				std::string token = getHeaderIgnoreCase(req, "X-Token");
+				if (token.empty()) {
+					const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+					if (authHeader.rfind("Bearer ", 0) == 0) {
+						token = authHeader.substr(7);
+					}
+				}
+				if (token.empty() || !userManager.getTokenUsername(token, uploader)) {
+					responseJson["success"] = false;
+					responseJson["message"] = "Invalid or missing token.";
+					res.SendJson(Json::FastWriter().write(responseJson), 401);
+					return;
+				}
+			}
 
 			auto sanitizeFilename = [](const std::string& input) -> std::string {
 				if (input.empty()) {
@@ -402,7 +549,7 @@ int main() {
 			responseJson["message"] = "File uploaded successfully.";
 			responseJson["filename"] = fileName;
 
-			if (!nConverter.addPendingDatabase(fileName, fileHash, fileContent.size())) {
+          if (!nConverter.addPendingDatabase(fileName, fileHash, fileContent.size(), uploader)) {
 				responseJson["success"] = false;
 				responseJson["message"] = "Failed to add pending conversion to database.";
 				{
@@ -431,6 +578,7 @@ int main() {
 				pendingJson["filename"] = record.at("file_name");
 				pendingJson["uniqueid"] = record.at("unique_id");
 				pendingJson["filesize"] = record.at("file_size");
+				pendingJson["updater"] = record.at("user_id");
 				responseJson["data"].append(pendingJson);
 			}
 			res.SendJson(Json::FastWriter().write(responseJson));
@@ -554,7 +702,16 @@ int main() {
 				}
 
 				std::string rawFileName = nConverter.getPendingFilename(fileHash);
-				if (!nConverter.addFinishedDatabase(rawFileName, fileHash, format, pictureHash, convertedFileSize)) {
+              std::string uploader;
+				for (const auto& record : nConverter.getConverterPending()) {
+					auto itUnique = record.find("unique_id");
+					auto itUser = record.find("user_id");
+					if (itUnique != record.end() && itUser != record.end() && itUnique->second == fileHash) {
+						uploader = itUser->second;
+						break;
+					}
+				}
+				if (!nConverter.addFinishedDatabase(rawFileName, fileHash, format, pictureHash, convertedFileSize, uploader)) {
 					responseJson["success"] = false;
 					responseJson["message"] = "Failed to add finished conversion to database.";
 					res.SendJson(Json::FastWriter().write(responseJson));
@@ -590,6 +747,8 @@ int main() {
 				convertedJson["format"] = record.at("file_format");
 				convertedJson["picture_hash"] = record.at("picture_hash");
 				convertedJson["file_size"] = std::stoi(record.at("file_size"));
+                convertedJson["username"] = record.at("user_id");
+				convertedJson["updater"] = record.at("user_id");
 				responseJson["data"].append(convertedJson);
 			}
 			res.SendJson(Json::FastWriter().write(responseJson));
@@ -909,30 +1068,383 @@ int main() {
 			responseJson["data"]["mime"] = (lowerFormat == "flac") ? "audio/flac" : "audio/mpeg";
 			res.SendJson(Json::FastWriter().write(responseJson));
 			};
+		auto handleConvertedPlayStream = [&nConverter](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			auto decodeUrlComponent = [](const std::string& input) -> std::string {
+				std::string out;
+				out.reserve(input.size());
+				for (size_t i = 0; i < input.size(); ++i) {
+					const char ch = input[i];
+					if (ch == '+') {
+						out.push_back(' ');
+						continue;
+					}
+					if (ch == '%' && i + 2 < input.size()) {
+						auto hexValue = [](char c) -> int {
+							if (c >= '0' && c <= '9') return c - '0';
+							if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+							if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+							return -1;
+						};
+						const int hi = hexValue(input[i + 1]);
+						const int lo = hexValue(input[i + 2]);
+						if (hi >= 0 && lo >= 0) {
+							out.push_back(static_cast<char>((hi << 4) | lo));
+							i += 2;
+							continue;
+						}
+					}
+					out.push_back(ch);
+				}
+				return out;
+			};
 
-		server.On("/reservation", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/reservation
+			auto getQueryParameter = [&decodeUrlComponent](const std::string& rawPath, const std::string& key) -> std::string {
+				const size_t queryPos = rawPath.find('?');
+				if (queryPos == std::string::npos || queryPos + 1 >= rawPath.size()) {
+					return "";
+				}
+				const std::string query = rawPath.substr(queryPos + 1);
+				size_t start = 0;
+				while (start < query.size()) {
+					const size_t end = query.find('&', start);
+					const std::string part = query.substr(start, end == std::string::npos ? std::string::npos : end - start);
+					const size_t eqPos = part.find('=');
+					const std::string name = decodeUrlComponent(part.substr(0, eqPos));
+					if (name == key) {
+						if (eqPos == std::string::npos || eqPos + 1 >= part.size()) return "";
+						return decodeUrlComponent(part.substr(eqPos + 1));
+					}
+					if (end == std::string::npos) break;
+					start = end + 1;
+				}
+				return "";
+			};
+
+			auto getHeaderIgnoreCase = [&req](const std::string& name) -> std::string {
+				std::string lowerName = name;
+				std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
+					return static_cast<char>(std::tolower(c));
+					});
+				for (const auto& [k, v] : req.headers) {
+					std::string lowerKey = k;
+					std::transform(lowerKey.begin(), lowerKey.end(), lowerKey.begin(), [](unsigned char c) {
+						return static_cast<char>(std::tolower(c));
+						});
+					if (lowerKey == lowerName) return v;
+				}
+				return "";
+			};
+
+			const std::string uniqueid = getQueryParameter(req.rawPath, "uniqueid");
+			if (uniqueid.empty()) {
+				res.SendText("Invalid uniqueid.", 400);
+				return;
+			}
+
+			std::string format;
+			for (const auto& record : nConverter.getConverted()) {
+				auto itUnique = record.find("file_name");
+				auto itFormat = record.find("file_format");
+				if (itUnique != record.end() && itFormat != record.end() && itUnique->second == uniqueid) {
+					format = itFormat->second;
+					break;
+				}
+			}
+
+			if (format.empty()) {
+				res.SendText("No converted file found for uniqueid.", 404);
+				return;
+			}
+
+			std::string lowerFormat = format;
+			std::transform(lowerFormat.begin(), lowerFormat.end(), lowerFormat.begin(), [](unsigned char c) {
+				return static_cast<char>(std::tolower(c));
+				});
+
+			std::vector<std::filesystem::path> candidates;
+			const std::filesystem::path resultDir = std::filesystem::path("convert") / "result";
+			candidates.push_back(resultDir / uniqueid);
+			if (lowerFormat == "flac") {
+				candidates.push_back(resultDir / (uniqueid + ".flac"));
+				candidates.push_back(resultDir / (uniqueid + ".mp3"));
+			}
+			else {
+				candidates.push_back(resultDir / (uniqueid + ".mp3"));
+				candidates.push_back(resultDir / (uniqueid + ".flac"));
+			}
+
+			std::filesystem::path convertedFilePath;
+			for (const auto& candidate : candidates) {
+				if (std::filesystem::exists(candidate) && std::filesystem::is_regular_file(candidate)) {
+					convertedFilePath = candidate;
+					break;
+				}
+			}
+
+			if (convertedFilePath.empty()) {
+				res.SendText("Audio file not found.", 404);
+				return;
+			}
+
+			const std::string mimeType = (lowerFormat == "flac") ? "audio/flac" : "audio/mpeg";
+			const std::string rangeHeader = getHeaderIgnoreCase("Range");
+			res.SendFileStream(convertedFilePath.string(), mimeType, rangeHeader);
+			};
+
+		auto handleLoginExecution = [&userManager](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value responseJson;
+          const std::string execution = userManager.generateExecution();
+			responseJson["success"] = true;
+			responseJson["execution"] = execution;
+			res.SendJson(Json::FastWriter().write(responseJson));
+			};
+        auto handleLoginRsaPublicKey = [&userManager](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value responseJson;
+			const std::string publicKeyPem = userManager.getPublicKeyPem();
+			responseJson["success"] = !publicKeyPem.empty();
+			responseJson["publickey"] = publicKeyPem;
+			res.SendJson(Json::FastWriter().write(responseJson));
+			};
+		auto handleLoginVarifyEncrypt = [&userManager](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string plainText = requestJson["plainText"].asString();
+			Json::Value responseJson;
+			std::string encryptedBase64, info;
+			if (!userManager.encryptWithPublicKey(plainText, encryptedBase64, info)) {
+				responseJson["success"] = false;
+				responseJson["message"] = info.empty() ? "Encrypt failed." : info;
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+			responseJson["success"] = true;
+			responseJson["varify"] = encryptedBase64;
+			res.SendJson(Json::FastWriter().write(responseJson));
+			};
+		auto handleLogin = [&logger, &userManager](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string username = requestJson["username"].asString();
+			const std::string varify = requestJson["varify"].asString();
+			Json::Value responseJson;
+
+			if (username.empty() || varify.empty()) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Missing required fields.";
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+           std::string token, info;
+			if (userManager.verifyLogin(username, varify, token, info)) {
+				responseJson["success"] = true;
+				responseJson["message"] = "Login successful.";
+				responseJson["username"] = username;
+				responseJson["token"] = token;
+               responseJson["redirect"] = "/";
+				res.SendJson(Json::FastWriter().write(responseJson));
+			}
+			else {
+				responseJson["success"] = false;
+                responseJson["message"] = info.empty() ? "Invalid login signature, user or execution." : info;
+				logger.Warning("Login failed for username=" + username);
+				res.SendJson(Json::FastWriter().write(responseJson), 401);
+			}
+			};
+
+		auto handleRegister = [&logger, &userManager, &consumeInviteCode](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string username = requestJson["username"].asString();
+			const std::string encryptedPassword = requestJson["password"].asString();
+			const std::string execution = requestJson["execution"].asString();
+			const std::string registerCode = requestJson["registerCode"].asString();
+			Json::Value responseJson;
+
+			if (username.empty() || encryptedPassword.empty() || execution.empty() || registerCode.empty()) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Missing required fields.";
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+            bool inviteInternalError = false;
+			std::string inviteInfo;
+			if (!consumeInviteCode(registerCode, inviteInfo, inviteInternalError)) {
+				responseJson["success"] = false;
+				responseJson["message"] = inviteInfo;
+				res.SendJson(Json::FastWriter().write(responseJson), inviteInternalError ? 500 : 403);
+				return;
+			}
+
+			std::string info;
+			if (userManager.registerUser(username, encryptedPassword, execution, info)) {
+				responseJson["success"] = true;
+				responseJson["message"] = "Register successful.";
+				responseJson["username"] = username;
+				responseJson["redirect"] = "/";
+				res.SendJson(Json::FastWriter().write(responseJson));
+			}
+			else {
+				responseJson["success"] = false;
+				responseJson["message"] = info.empty() ? "Register failed: invalid data or user already exists." : info;
+				logger.Warning("Register failed for username=" + username);
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+			}
+			};
+
+		auto handleLogout = [&](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			std::string token = getHeaderIgnoreCase(req, "X-Token");
+			if (token.empty()) {
+				const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+				if (authHeader.rfind("Bearer ", 0) == 0) {
+					token = authHeader.substr(7);
+				}
+			}
+			if (token.empty()) {
+				token = getCookieValue(req, "authToken");
+			}
+
+			Json::Value responseJson;
+           if (token.empty() || !userManager.checkTokenValidation(token)) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Invalid or missing token.";
+				res.SendJson(Json::FastWriter().write(responseJson), 401);
+				return;
+			}
+
+			if (!userManager.removeToken(token)) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Failed to remove token.";
+				res.SendJson(Json::FastWriter().write(responseJson), 500);
+				return;
+			}
+
+			responseJson["success"] = true;
+			responseJson["message"] = "Logout successful.";
+			res.SendJson(Json::FastWriter().write(responseJson));
+			};
+
+		auto handleDeleteAccount = [&](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			std::string token = getHeaderIgnoreCase(req, "X-Token");
+			if (token.empty()) {
+				const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+				if (authHeader.rfind("Bearer ", 0) == 0) {
+					token = authHeader.substr(7);
+				}
+			}
+			if (token.empty()) {
+				token = getCookieValue(req, "authToken");
+			}
+
+			Json::Value responseJson;
+			std::string username;
+			if (token.empty() || !userManager.getTokenUsername(token, username)) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Invalid or missing token.";
+				res.SendJson(Json::FastWriter().write(responseJson), 401);
+				return;
+			}
+
+			if (!userManager.removeToken(token)) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Failed to remove token.";
+				res.SendJson(Json::FastWriter().write(responseJson), 500);
+				return;
+			}
+
+			if (!username.empty() && !userManager.dbDeleteUser(username)) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Failed to delete user.";
+				res.SendJson(Json::FastWriter().write(responseJson), 500);
+				return;
+			}
+
+			responseJson["success"] = true;
+           responseJson["message"] = "Account deletion successful.";
+			res.SendJson(Json::FastWriter().write(responseJson));
+			};
+
+		auto handleTestShowInfo = [&userManager](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value responseJson;
+			responseJson["success"] = true;
+
+			const auto executions = userManager.getExecutionDebugInfo();
+			for (const auto& execution : executions) {
+				Json::Value item;
+				item["execution"] = execution.execution;
+				item["remainingSeconds"] = static_cast<Json::Int64>(execution.remainingSeconds);
+				responseJson["executions"].append(item);
+			}
+
+			const auto tokens = userManager.getTokenDebugInfo();
+			for (const auto& token : tokens) {
+				Json::Value item;
+				item["token"] = token.token;
+				item["username"] = token.username;
+				item["remainingSeconds"] = static_cast<Json::Int64>(token.remainingSeconds);
+				responseJson["tokens"].append(item);
+			}
+
+			res.SendJson(Json::FastWriter().write(responseJson));
+			};
+
+		server.On("/reservation", [&](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/reservation
+			std::string token = getHeaderIgnoreCase(req, "X-Token");
+			if (token.empty()) token = getCookieValue(req, "authToken");
+			if (token.empty() || !userManager.checkTokenValidation(token)) {
+				res.SendText("Unauthorized", 401);
+				return;
+			}
 			res.SendFile("./html/reservation.html", "text/html");
 			});
-		server.On("/api/reservation/tasks/add", handleReservationTaskAdd);
-		server.On("/api/reservation/tasks/delete", handleReservationTaskDelete);
-		server.On("/api/reservation/tasks/refresh", handleReservationTaskRefresh);
-		server.On("/api/reservation/tasks/autopay/status", handleReservationAutoPayStatus);
-		server.On("/api/reservation/tasks/autopay/change", handleReservationAutoPayChange);
-		server.On("/api/reservation/pending/pay", handleReservationPendingPay);
-		server.On("/api/reservation/pending/delete", handleReservationPendingDelete);
+		server.On("/api/reservation/tasks/add", withAuth(handleReservationTaskAdd));
+		server.On("/api/reservation/tasks/delete", withAuth(handleReservationTaskDelete));
+		server.On("/api/reservation/tasks/refresh", withAuth(handleReservationTaskRefresh));
+		server.On("/api/reservation/tasks/autopay/status", withAuth(handleReservationAutoPayStatus));
+		server.On("/api/reservation/tasks/autopay/change", withAuth(handleReservationAutoPayChange));
+		server.On("/api/reservation/pending/pay", withAuth(handleReservationPendingPay));
+		server.On("/api/reservation/pending/delete", withAuth(handleReservationPendingDelete));
 
-		server.On("/convert", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/convert
+		server.On("/convert", [&](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/convert
+           std::string token = getHeaderIgnoreCase(req, "X-Token");
+			if (token.empty()) token = getCookieValue(req, "authToken");
+			if (token.empty() || !userManager.checkTokenValidation(token)) {
+				res.SendText("Unauthorized", 401);
+				return;
+			}
 			res.SendFile("./html/convert.html", "text/html");
 			});
-		server.On("/api/convert/upload", handleConvertUpload);
-		server.On("/api/convert/pending/refresh", handleConvertRefresh);
-		server.On("/api/convert/pending/delete", handleConverterPendingDelete);
-		server.On("/api/convert/pending/convert", handleConvert);
-		server.On("/api/convert/file/refresh", handleConvertedRefresh);
-		server.On("/api/convert/file/download", handleConvertedDownload);
-		server.On("/api/convert/file/delete", handleConvertedDelete);
-		server.On("/api/convert/file/cover", handleConvertedCover);
-		server.On("/api/convert/play", handleConvertedPlay);
+		server.On("/api/convert/upload", withAuth(handleConvertUpload));
+		server.On("/api/convert/pending/refresh", withAuth(handleConvertRefresh));
+		server.On("/api/convert/pending/delete", withAuth(handleConverterPendingDelete));
+		server.On("/api/convert/pending/convert", withAuth(handleConvert));
+		server.On("/api/convert/file/refresh", withAuth(handleConvertedRefresh));
+		server.On("/api/convert/file/download", withAuth(handleConvertedDownload));
+		server.On("/api/convert/file/delete", withAuth(handleConvertedDelete));
+		server.On("/api/convert/file/cover", withAuth(handleConvertedCover));
+		server.On("/api/convert/play", withAuth(handleConvertedPlay));
+		server.On("/api/convert/play/stream", withAuth(handleConvertedPlayStream));
+
+		server.On("/login", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/login
+			res.SendFile("./html/login.html", "text/html");
+			});
+
+		server.On("/api/rsa/publickey", handleLoginRsaPublicKey);
+      server.On("/api/rsa/encrypt", handleLoginVarifyEncrypt);
+		server.On("/api/execution", handleLoginExecution);
+
+		server.On("/api/login", handleLogin);
+		server.On("/api/register", handleRegister);
+		server.On("/api/logout", handleLogout);
+		server.On("/api/account/delete", handleDeleteAccount);
+
+		server.On("/register", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/register
+			res.SendFile("./html/register.html", "text/html");
+			});
+
+		server.On("/", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/login
+			res.SendFile("./html/index.html", "text/html");
+			});
+
+        server.On("/test/showinfo", withAuth(handleTestShowInfo));
 
 		server.Start();
 	}

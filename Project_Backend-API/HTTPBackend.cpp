@@ -5,6 +5,7 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -91,6 +92,66 @@ namespace {
 			return false;
 		}
 	}
+
+	std::string EscapeForLog(std::string_view text) {
+		std::ostringstream oss;
+		oss << std::hex << std::uppercase;
+		for (const unsigned char ch : text) {
+			if (ch == '\r') {
+				oss << "\\r";
+			}
+			else if (ch == '\n') {
+				oss << "\\n";
+			}
+			else if (std::isprint(ch) != 0) {
+				oss << static_cast<char>(ch);
+			}
+			else {
+				oss << "\\x" << std::setw(2) << std::setfill('0') << static_cast<int>(ch);
+			}
+		}
+		return oss.str();
+	}
+
+	bool IsValidHttpMethod(std::string_view method) {
+		if (method.empty() || method.size() > 16) {
+			return false;
+		}
+
+		for (const unsigned char ch : method) {
+			if (!(ch >= 'A' && ch <= 'Z')) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	bool IsValidRequestPath(std::string_view path) {
+		if (path.empty() || path.front() != '/') {
+			return false;
+		}
+
+		for (const unsigned char ch : path) {
+			if (ch < 0x20 || ch == 0x7F) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	bool IsLikelyTlsClientHello(std::string_view data) {
+		if (data.size() < 3) {
+			return false;
+		}
+
+		const unsigned char first = static_cast<unsigned char>(data[0]);
+		const unsigned char second = static_cast<unsigned char>(data[1]);
+		const unsigned char third = static_cast<unsigned char>(data[2]);
+
+		return first == 0x16 && second == 0x03 && third <= 0x04;
+	}
 }
 
 HttpServer::HttpResponse::HttpResponse(SocketHandle clientSocket) : clientSocket_(clientSocket) {}
@@ -159,6 +220,114 @@ void HttpServer::HttpResponse::SendFile(const std::string& filePath, const std::
 	const std::string body{ std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
 	const auto type = contentType.empty() ? GuessContentType(filePath) : contentType;
 	Send(200, type, body);
+}
+
+void HttpServer::HttpResponse::SendFileStream(const std::string& filePath, const std::string& contentType, const std::string& rangeHeader) {
+	std::ifstream file(filePath, std::ios::binary);
+	if (!file) {
+		SendText("File Not Found", 404);
+		return;
+	}
+
+	file.seekg(0, std::ios::end);
+	const std::streamoff fileSizeOff = file.tellg();
+	if (fileSizeOff < 0) {
+		SendText("Failed to read file", 500);
+		return;
+	}
+
+	const size_t fileSize = static_cast<size_t>(fileSizeOff);
+	const std::string type = contentType.empty() ? GuessContentType(filePath) : contentType;
+
+	size_t start = 0;
+	size_t end = fileSize > 0 ? fileSize - 1 : 0;
+	bool partial = false;
+
+	if (!rangeHeader.empty() && fileSize > 0) {
+		const std::string prefix = "bytes=";
+		if (rangeHeader.rfind(prefix, 0) == 0) {
+			const std::string spec = rangeHeader.substr(prefix.size());
+			const size_t commaPos = spec.find(',');
+			const std::string firstRange = spec.substr(0, commaPos);
+			const size_t dashPos = firstRange.find('-');
+			if (dashPos != std::string::npos) {
+				const std::string left = firstRange.substr(0, dashPos);
+				const std::string right = firstRange.substr(dashPos + 1);
+
+				try {
+					if (!left.empty()) {
+						start = static_cast<size_t>(std::stoull(left));
+						if (!right.empty()) {
+							end = static_cast<size_t>(std::stoull(right));
+						}
+						else {
+							end = fileSize - 1;
+						}
+					}
+					else if (!right.empty()) {
+						const size_t suffixLength = static_cast<size_t>(std::stoull(right));
+						if (suffixLength >= fileSize) {
+							start = 0;
+						}
+						else {
+							start = fileSize - suffixLength;
+						}
+						end = fileSize - 1;
+					}
+					partial = true;
+				}
+				catch (...) {
+					partial = false;
+					start = 0;
+					end = fileSize - 1;
+				}
+			}
+		}
+	}
+
+	if (fileSize > 0 && (start >= fileSize || end < start || end >= fileSize)) {
+		const std::string response =
+			"HTTP/1.1 416 " + GetStatusText(416) + "\r\n"
+			"Content-Range: bytes */" + std::to_string(fileSize) + "\r\n"
+			"Content-Length: 0\r\n"
+			"Connection: close\r\n\r\n";
+		SendAll(response.data(), response.size());
+		sent_ = true;
+		return;
+	}
+
+	const size_t bytesToSend = fileSize == 0 ? 0 : (end - start + 1);
+	std::string header =
+		"HTTP/1.1 " + std::to_string(partial ? 206 : 200) + " " + GetStatusText(partial ? 206 : 200) + "\r\n"
+		"Content-Type: " + type + "\r\n"
+		"Accept-Ranges: bytes\r\n"
+		"Content-Length: " + std::to_string(bytesToSend) + "\r\n"
+		"Connection: close\r\n";
+
+	if (partial && fileSize > 0) {
+		header += "Content-Range: bytes " + std::to_string(start) + "-" + std::to_string(end) + "/" + std::to_string(fileSize) + "\r\n";
+	}
+
+	header += "\r\n";
+	SendAll(header.data(), header.size());
+
+	if (bytesToSend > 0) {
+		file.seekg(static_cast<std::streamoff>(start), std::ios::beg);
+		std::array<char, 64 * 1024> buffer{};
+		size_t remaining = bytesToSend;
+		while (remaining > 0 && file) {
+			const size_t chunk = (std::min)(remaining, buffer.size());
+			file.read(buffer.data(), static_cast<std::streamsize>(chunk));
+			const std::streamsize got = file.gcount();
+			if (got <= 0) {
+				break;
+			}
+			SendAll(buffer.data(), static_cast<size_t>(got));
+			remaining -= static_cast<size_t>(got);
+		}
+	}
+
+	sent_ = true;
 }
 
 void HttpServer::HttpResponse::SendFileDownload(const std::string& filePath, const std::string& downloadName, const std::string& contentType) {
@@ -545,13 +714,22 @@ bool HttpServer::TryServeLocalFile(const std::string& requestPath, HttpResponse&
 		return false;
 	}
 
-	const std::filesystem::path filePath(localPath);
-	if (!std::filesystem::exists(filePath) || !std::filesystem::is_regular_file(filePath)) {
+    try {
+		const std::filesystem::path filePath(localPath);
+		std::error_code ec;
+		if (!std::filesystem::exists(filePath, ec) || ec) {
+			return false;
+		}
+		if (!std::filesystem::is_regular_file(filePath, ec) || ec) {
+			return false;
+		}
+
+		response.SendFile(filePath.string());
+		return true;
+	}
+	catch (...) {
 		return false;
 	}
-
-	response.SendFile(filePath.string());
-	return true;
 }
 
 void HttpServer::HandleClient(SocketHandle clientSocket) {
@@ -606,26 +784,20 @@ void HttpServer::HandleClient(SocketHandle clientSocket) {
 		return;
 	}
 
-	auto escapePacketForLog = [](std::string_view packet) {
-		std::string escaped;
-		escaped.reserve(packet.size());
-		for (char ch : packet) {
-			if (ch == '\r') {
-				escaped += "\\r";
-			}
-			else if (ch == '\n') {
-				escaped += "\\n";
-			}
-			else {
-				escaped.push_back(ch);
-			}
-		}
-		return escaped;
-	};
 	const HttpRequest request = ParseRequest(rawRequest);
-	if (!request.body.empty() && request.body.size() < 1024) logger_.Info("Request body: " + escapePacketForLog(request.body));
+ if (!request.body.empty() && request.body.size() < 1024) logger_.Info("Request body: " + EscapeForLog(request.body));
 	else if (request.body.size() >= 1024) logger_.Info("Request body: [large body of size " + std::to_string(request.body.size()) + " bytes]");
 	HttpResponse response(clientSocket);
+
+	if (!IsValidHttpMethod(request.method) || !IsValidRequestPath(request.path)) {
+		logger_.Warning("Invalid HTTP request received. method=" + EscapeForLog(request.method) + " path=" + EscapeForLog(request.path));
+      if (IsLikelyTlsClientHello(rawRequest)) {
+			logger_.Warning("Likely HTTPS/TLS handshake was sent to HTTP port " + std::to_string(port_) + ". Please use http:// or connect via a TLS terminator.");
+		}
+		response.SendText("Bad Request", 400);
+		return;
+	}
+
 	logger_.Info("Request: method=" + request.method + " path=" + request.path);
 
 	RouteHandler handler;

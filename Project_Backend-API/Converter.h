@@ -160,10 +160,10 @@ public:
 		return NCMPendingConvertFiles[uniqueid];
 	}
 
-	bool addPendingDatabase(std::string name, std::string hash, size_t size) {
+	bool addPendingDatabase(std::string name, std::string hash, size_t size, std::string username) {
 		std::map<std::string, std::string> writeVal;
 		writeVal["unique_id"] = hash;
-		writeVal["user_id"] = "";
+		writeVal["user_id"] = username;
 		writeVal["file_name"] = Base64::Encode(name);
 		writeVal["file_size"] = std::to_string(size);
 		int64_t newId = dbConnection_.insert("converter_pending", writeVal);
@@ -194,9 +194,9 @@ public:
 		auto records = dbConnection_.fetchAll("converter_finished");
 		return records;
 	}
-	bool addFinishedDatabase(std::string raw_name, std::string name, int format, std::string pictureHash, size_t fileSize) {
+	bool addFinishedDatabase(std::string raw_name, std::string name, int format, std::string pictureHash, size_t fileSize, std::string username) {
 		std::map<std::string, std::string> writeVal;
-		writeVal["user_id"] = "";
+		writeVal["user_id"] = username;
 		writeVal["file_raw_name"] = Base64::Encode(raw_name);
 		writeVal["file_name"] = name;
 		writeVal["picture_hash"] = pictureHash;

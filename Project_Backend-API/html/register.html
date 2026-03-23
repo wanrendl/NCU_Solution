@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="./icon.png" type="image/png" />
+    <title>注册</title>
+    <script src="./tailwindcss.min.js"></script>
+    <link href="./font-awesome.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50 min-h-screen m-0 p-0">
+    <div class="max-w-2xl mx-auto px-4 py-6">
+        <div class="bg-white rounded-xl shadow p-5 card-hover">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                <i class="fa fa-user-plus text-green-600 mr-2"></i>注册
+            </h2>
+            <div class="space-y-4">
+                <div>
+                    <label for="username" class="block text-sm text-gray-600 mb-1">用户名</label>
+                    <input id="username" type="text" class="w-full h-10 border border-gray-300 rounded-lg px-3 outline-none focus:border-blue-500" placeholder="请输入用户名" />
+                </div>
+                <div>
+                    <label for="password" class="block text-sm text-gray-600 mb-1">密码</label>
+                    <input id="password" type="password" class="w-full h-10 border border-gray-300 rounded-lg px-3 outline-none focus:border-blue-500" placeholder="请输入密码" />
+                </div>
+               <div>
+                    <label for="registerCode" class="block text-sm text-gray-600 mb-1">注册码</label>
+                    <input id="registerCode" type="text" class="w-full h-10 border border-gray-300 rounded-lg px-3 outline-none focus:border-blue-500" placeholder="请输入注册码" />
+                </div>
+                <div class="flex items-center gap-3">
+                    <button id="btnRegister" type="button" class="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg transition">注册</button>
+                    <button id="btnGoIndex" type="button" class="text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg transition">返回首页</button>
+                </div>
+                <p id="status" class="text-sm text-gray-500 whitespace-pre-wrap"></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById("status");
+        const usernameEl = document.getElementById("username");
+     const passwordEl = document.getElementById("password");
+     const registerCodeEl = document.getElementById("registerCode");
+        const btnRegister = document.getElementById("btnRegister");
+        const btnGoIndex = document.getElementById("btnGoIndex");
+
+        let execution = "";
+        let publicKeyPem = "";
+
+        function setStatus(text, isError = false) {
+         statusEl.classList.remove("text-gray-500", "text-red-600", "text-green-600");
+            statusEl.classList.add(isError ? "text-red-600" : "text-green-600");
+            statusEl.textContent = text;
+        }
+
+        function pemToArrayBuffer(pem) {
+            const clean = pem
+                .replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replace(/\s+/g, "");
+            const binary = atob(clean);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i += 1) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function getSubtleCrypto() {
+            if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+                return window.crypto.subtle;
+            }
+            return null;
+        }
+
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = "";
+            for (let i = 0; i < bytes.length; i += 1) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        function arrayBufferToHex(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let hex = "";
+            for (let i = 0; i < bytes.length; i += 1) {
+                hex += bytes[i].toString(16).padStart(2, "0");
+            }
+            return hex;
+        }
+
+		function sha256HexFallback(text) {
+			function rightRotate(value, amount) {
+				return (value >>> amount) | (value << (32 - amount));
+			}
+
+			const mathPow = Math.pow;
+			const maxWord = mathPow(2, 32);
+			let result = "";
+			const words = [];
+			const asciiBitLength = text.length * 8;
+
+			const hash = [];
+			const k = [];
+			let primeCounter = 0;
+			const isComposite = {};
+			for (let candidate = 2; primeCounter < 64; candidate += 1) {
+				if (!isComposite[candidate]) {
+					for (let i = 0; i < 313; i += candidate) {
+						isComposite[i] = candidate;
+					}
+					hash[primeCounter] = (mathPow(candidate, 0.5) * maxWord) | 0;
+					k[primeCounter] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
+					primeCounter += 1;
+				}
+			}
+
+			text += "\x80";
+			while ((text.length % 64) - 56) {
+				text += "\x00";
+			}
+			for (let i = 0; i < text.length; i += 1) {
+				const j = text.charCodeAt(i);
+				words[i >> 2] |= j << (((3 - i) % 4) * 8);
+			}
+			words[words.length] = (asciiBitLength / maxWord) | 0;
+			words[words.length] = asciiBitLength;
+
+			for (let j = 0; j < words.length;) {
+				const w = words.slice(j, (j += 16));
+				const oldHash = hash.slice(0);
+
+				for (let i = 0; i < 64; i += 1) {
+					const i2 = i + j;
+					let w15 = w[i - 15];
+					let w2 = w[i - 2];
+
+					const a = hash[0];
+					const e = hash[4];
+					const temp1 =
+						hash[7]
+						+ (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25))
+						+ ((e & hash[5]) ^ ((~e) & hash[6]))
+						+ k[i]
+						+ (w[i] = i < 16
+							? w[i]
+							: (
+								w[i - 16]
+								+ (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3))
+								+ w[i - 7]
+								+ (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))
+							) | 0);
+					const temp2 =
+						(rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22))
+						+ ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+
+					hash.unshift((temp1 + temp2) | 0);
+					hash[4] = (hash[4] + temp1) | 0;
+					hash.pop();
+				}
+
+				for (let i = 0; i < 8; i += 1) {
+					hash[i] = (hash[i] + oldHash[i]) | 0;
+				}
+			}
+
+			for (let i = 0; i < 8; i += 1) {
+				for (let j = 3; j + 1; j -= 1) {
+					const b = (hash[i] >> (j * 8)) & 255;
+					result += ((b < 16) ? 0 : "") + b.toString(16);
+				}
+			}
+			return result;
+		}
+
+		async function sha256Hex(text) {
+			const webCrypto = (typeof window !== 'undefined' && window.crypto && window.crypto.subtle)
+				? window.crypto
+				: null;
+			if (webCrypto && webCrypto.subtle) {
+				const digest = await webCrypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+				return arrayBufferToHex(digest);
+			}
+			return sha256HexFallback(text);
+		}
+
+        async function loadRegisterContext() {
+            setStatus("正在初始化注册上下文...");
+            const [executionResp, keyResp] = await Promise.all([
+                fetch("/api/execution", { method: "GET" }),
+                fetch("/api/rsa/publickey", { method: "GET" })
+            ]);
+
+            const executionJson = await executionResp.json();
+            const keyJson = await keyResp.json();
+
+            if (!executionJson.success || !executionJson.execution) {
+                throw new Error("获取 execution 失败");
+            }
+            if (!keyJson.success || !keyJson.publickey) {
+                throw new Error("获取 RSA 公钥失败");
+            }
+
+            execution = executionJson.execution;
+            publicKeyPem = keyJson.publickey;
+            setStatus("初始化完成，请输入用户名后注册。");
+        }
+
+        async function encryptPasswordPayload(plainText) {
+            const subtle = getSubtleCrypto();
+            if (!subtle) {
+                const fallbackResp = await fetch('/api/rsa/encrypt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plainText })
+                });
+                const fallbackJson = await fallbackResp.json();
+                if (!fallbackResp.ok || !fallbackJson.success || !fallbackJson.varify) {
+                    throw new Error((fallbackJson && fallbackJson.message) || '服务端加密失败');
+                }
+                return fallbackJson.varify;
+            }
+
+            const publicKey = await subtle.importKey(
+                "spki",
+                pemToArrayBuffer(publicKeyPem),
+                { name: "RSA-OAEP", hash: "SHA-256" },
+                false,
+                ["encrypt"]
+            );
+          const encrypted = await subtle.encrypt(
+                { name: "RSA-OAEP" },
+                publicKey,
+                new TextEncoder().encode(plainText)
+            );
+            return arrayBufferToBase64(encrypted);
+        }
+
+        async function doRegister() {
+            const username = usernameEl.value.trim();
+            const password = passwordEl.value;
+            const registerCode = registerCodeEl.value.trim();
+            if (!username) {
+                setStatus("请输入用户名。", true);
+                return;
+            }
+          if (!password) {
+                setStatus("请输入密码。", true);
+                return;
+            }
+          if (!registerCode) {
+                setStatus("请输入注册码。", true);
+                return;
+            }
+            if (!execution || !publicKeyPem) {
+                setStatus("注册上下文未就绪，请稍后重试。", true);
+                return;
+            }
+
+            btnRegister.disabled = true;
+            try {
+                setStatus("正在提交注册...");
+             const passwordHash = await sha256Hex(password + "GO=");
+                const encryptedPassword = await encryptPasswordPayload(username + passwordHash);
+                const registerResp = await fetch("/api/register", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                  body: JSON.stringify({ username, password: encryptedPassword, execution, registerCode })
+                });
+
+                const registerJson = await registerResp.json();
+                if (registerJson.success) {
+					localStorage.setItem("authUsername", username);
+					setStatus(registerJson.message || "注册成功");
+					window.location.href = registerJson.redirect || "/";
+				} else {
+                    setStatus(registerJson.message || "注册失败", true);
+                }
+
+                await loadRegisterContext();
+            } catch (error) {
+                setStatus(`注册异常: ${error.message || error}`, true);
+            } finally {
+                btnRegister.disabled = false;
+            }
+        }
+
+        btnRegister.addEventListener("click", doRegister);
+        btnGoIndex.addEventListener("click", () => {
+            window.location.href = "/";
+        });
+        loadRegisterContext().catch((error) => {
+            setStatus(`初始化失败: ${error.message || error}`, true);
+        });
+    </script>
+</body>
+</html>

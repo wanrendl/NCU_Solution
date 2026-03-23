@@ -34,6 +34,9 @@
     <Filter Include="Source\functions">
       <UniqueIdentifier>{1169feb9-4206-4b29-90b0-1dd4498e7214}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Resource\keys">
+      <UniqueIdentifier>{2203c8e9-ec9c-4da5-bbb7-3ed24f2b0c71}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source.cpp">
@@ -66,6 +69,7 @@
       <Filter>Resource</Filter>
     </Text>
     <Text Include="CMakeLists.txt" />
+    <Text Include="InviteCode.txt" />
   </ItemGroup>
   <ItemGroup>
     <None Include="reservation.html">
@@ -88,6 +92,21 @@
       <Filter>Resource\html</Filter>
     </None>
     <None Include="html\reservation.html">
+      <Filter>Resource\html</Filter>
+    </None>
+    <None Include="keys\private.pem">
+      <Filter>Resource\keys</Filter>
+    </None>
+    <None Include="keys\public.pem">
+      <Filter>Resource\keys</Filter>
+    </None>
+    <None Include="html\login.html">
+      <Filter>Resource\html</Filter>
+    </None>
+    <None Include="html\register.html">
+      <Filter>Resource\html</Filter>
+    </None>
+    <None Include="html\index.html">
       <Filter>Resource\html</Filter>
     </None>
   </ItemGroup>
@@ -123,6 +142,9 @@
       <Filter>Header\utils</Filter>
     </ClInclude>
     <ClInclude Include="ncmmeta.h">
+      <Filter>Header\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="tokenManagement.h">
       <Filter>Header\utils</Filter>
     </ClInclude>
   </ItemGroup>

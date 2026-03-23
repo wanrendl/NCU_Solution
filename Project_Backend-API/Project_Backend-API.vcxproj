@@ -146,6 +146,7 @@
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />
+    <Text Include="InviteCode.txt" />
     <Text Include="server.log" />
   </ItemGroup>
   <ItemGroup>
@@ -153,7 +154,12 @@
     <None Include="convert.html" />
     <None Include="font-awesome.min.css" />
     <None Include="html\convert.html" />
+    <None Include="html\index.html" />
+    <None Include="html\login.html" />
+    <None Include="html\register.html" />
     <None Include="html\reservation.html" />
+    <None Include="keys\private.pem" />
+    <None Include="keys\public.pem" />
     <None Include="reservation.html" />
     <None Include="README-linux.md" />
     <None Include="tailwindcss.min.js" />
@@ -170,6 +176,7 @@
     <ClInclude Include="ncmmeta.h" />
     <ClInclude Include="NCUReservation.h" />
     <ClInclude Include="sha256.h" />
+    <ClInclude Include="tokenManagement.h" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="icon.png" />
