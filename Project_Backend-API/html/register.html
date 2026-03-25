@@ -44,6 +44,16 @@
         const btnRegister = document.getElementById("btnRegister");
         const btnGoIndex = document.getElementById("btnGoIndex");
 
+    document.addEventListener('copy', (e) => e.preventDefault());
+    document.addEventListener('cut', (e) => e.preventDefault());
+    document.addEventListener('selectstart', (e) => e.preventDefault());
+    document.addEventListener('keydown', (e) => {
+        const key = String(e.key || '').toLowerCase();
+        if ((e.ctrlKey || e.metaKey) && (key === 'c' || key === 'x' || key === 'insert')) {
+            e.preventDefault();
+        }
+    });
+
         let execution = "";
         let publicKeyPem = "";
 

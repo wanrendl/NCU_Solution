@@ -273,6 +273,39 @@
             return decoded || encoded;
 		}
 
+        function decodeUtf8FromLatin1(text) {
+            if (!text) return '';
+            const bytes = new Uint8Array(text.length);
+            for (let i = 0; i < text.length; i += 1) {
+                bytes[i] = text.charCodeAt(i) & 0xFF;
+            }
+            return new TextDecoder('utf-8').decode(bytes);
+        }
+
+        function getDownloadFilename(disposition, fallbackName) {
+            const header = String(disposition || '');
+            const starMatch = header.match(/filename\*=UTF-8''([^;]+)/i);
+            if (starMatch && starMatch[1]) {
+                try {
+                    return decodeURIComponent(starMatch[1]);
+                } catch (_) {
+                    return starMatch[1];
+                }
+            }
+
+            const normalMatch = header.match(/filename="?([^";]+)"?/i);
+            if (normalMatch && normalMatch[1]) {
+                const value = normalMatch[1];
+                try {
+                    return decodeUtf8FromLatin1(value);
+                } catch (_) {
+                    return value;
+                }
+            }
+
+            return fallbackName || 'download.bin';
+        }
+
         function resolveFormat(file) {
             if (!file || typeof file !== 'object') return '';
             return String(file.format || file.file_format || '').toUpperCase();
@@ -993,8 +1026,7 @@
 
                 const blob = downloadResult.blob;
                 const disposition = downloadResult.disposition;
-                const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
-                const finalName = decodeURIComponent((match && (match[1] || match[2])) || fileName);
+                const finalName = getDownloadFilename(disposition, fileName);
 				const url = URL.createObjectURL(blob);
 				const a = document.createElement('a');
 				a.href = url;

@@ -1,6 +1,7 @@
-#include "Converter.h"
 #include "base64.h"
+#include "Converter.h"
 #include "databaseConnection.h"
+#include "File.h"
 #include "HTTPBackend.h"
 #include "json.h"
 #include "ncmmeta.h"
@@ -13,6 +14,10 @@
 #include <mutex>
 #include <string_view>
 #include <vector>
+#include <taglib/attachedpictureframe.h>
+#include <taglib/flacfile.h>
+#include <taglib/id3v2tag.h>
+#include <taglib/mpegfile.h>
 
 std::string Version = "v20260322-132900";
 
@@ -53,12 +58,15 @@ int main() {
 
 		NeteaseConverter nConverter(dbConn, logger);
 		nConverter.initialize();
+		std::mutex convertRawFileMutex;
 
 		userManagement userManager(dbConn);
 		userManager.initialize();
 
+		FileManager fManager(dbConn, logger);
+		std::mutex fileOpMutex;
+
 		HttpServer server(8027, logger);
-		std::mutex convertRawFileMutex;
 		if (!userManager.initializeLoginSecurity()) {
 			throw std::runtime_error("Failed to initialize login security context.");
 		}
@@ -76,9 +84,9 @@ int main() {
 				if (lowerKey == lowerName) return v;
 			}
 			return "";
-		};
+			};
 
-        auto getCookieValue = [&](const HttpServer::HttpRequest& req, const std::string& key) -> std::string {
+		auto getCookieValue = [&](const HttpServer::HttpRequest& req, const std::string& key) -> std::string {
 			const std::string cookieHeader = getHeaderIgnoreCase(req, "Cookie");
 			if (cookieHeader.empty()) return "";
 
@@ -98,6 +106,129 @@ int main() {
 				start = end + 1;
 			}
 			return "";
+			};
+
+		auto decodeUrlComponent = [](const std::string& input) -> std::string {
+			std::string out;
+			out.reserve(input.size());
+			auto hexValue = [](char c) -> int {
+				if (c >= '0' && c <= '9') return c - '0';
+				if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+				if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+				return -1;
+			};
+			for (size_t i = 0; i < input.size(); ++i) {
+				const char ch = input[i];
+				if (ch == '+') {
+					out.push_back(' ');
+					continue;
+				}
+				if (ch == '%' && i + 2 < input.size()) {
+					const int hi = hexValue(input[i + 1]);
+					const int lo = hexValue(input[i + 2]);
+					if (hi >= 0 && lo >= 0) {
+						out.push_back(static_cast<char>((hi << 4) | lo));
+						i += 2;
+						continue;
+					}
+				}
+				out.push_back(ch);
+			}
+			return out;
+		};
+
+		auto extractQueryParameter = [&](const std::string& rawPath, const std::string& key) -> std::string {
+			const size_t queryPos = rawPath.find('?');
+			if (queryPos == std::string::npos || queryPos + 1 >= rawPath.size()) {
+				return "";
+			}
+			const std::string query = rawPath.substr(queryPos + 1);
+			size_t start = 0;
+			while (start < query.size()) {
+				const size_t end = query.find('&', start);
+				const std::string part = query.substr(start, end == std::string::npos ? std::string::npos : end - start);
+				const size_t eqPos = part.find('=');
+				const std::string name = decodeUrlComponent(part.substr(0, eqPos));
+				if (name == key) {
+					if (eqPos == std::string::npos || eqPos + 1 >= part.size()) return "";
+					return decodeUrlComponent(part.substr(eqPos + 1));
+				}
+				if (end == std::string::npos) break;
+				start = end + 1;
+			}
+			return "";
+		};
+
+		auto isLikelyUtf8 = [](const std::string& text) -> bool {
+			int expectedContinuation = 0;
+			for (unsigned char ch : text) {
+				if (expectedContinuation > 0) {
+					if ((ch & 0xC0) != 0x80) return false;
+					--expectedContinuation;
+					continue;
+				}
+				if ((ch & 0x80) == 0x00) continue;
+				if ((ch & 0xE0) == 0xC0) expectedContinuation = 1;
+				else if ((ch & 0xF0) == 0xE0) expectedContinuation = 2;
+				else if ((ch & 0xF8) == 0xF0) expectedContinuation = 3;
+				else return false;
+			}
+			return expectedContinuation == 0;
+		};
+
+		auto latin1ToUtf8 = [](const std::string& input) -> std::string {
+			std::string out;
+			out.reserve(input.size() * 2);
+			for (unsigned char ch : input) {
+				if (ch < 0x80) {
+					out.push_back(static_cast<char>(ch));
+				}
+				else {
+					out.push_back(static_cast<char>(0xC0 | (ch >> 6)));
+					out.push_back(static_cast<char>(0x80 | (ch & 0x3F)));
+				}
+			}
+			return out;
+		};
+
+		auto parseMultipartFileName = [&](const std::string& partHeaders) -> std::string {
+			auto trim = [](std::string value) {
+				while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0) value.erase(value.begin());
+				while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())) != 0) value.pop_back();
+				return value;
+			};
+
+			auto readParamValue = [&](const std::string& key) -> std::string {
+				const size_t keyPos = partHeaders.find(key);
+				if (keyPos == std::string::npos) return "";
+				size_t valueStart = keyPos + key.size();
+				if (valueStart >= partHeaders.size()) return "";
+				if (partHeaders[valueStart] == '"') {
+					++valueStart;
+					const size_t quoteEnd = partHeaders.find('"', valueStart);
+					if (quoteEnd == std::string::npos) return "";
+					return partHeaders.substr(valueStart, quoteEnd - valueStart);
+				}
+				const size_t valueEnd = partHeaders.find(';', valueStart);
+				return trim(partHeaders.substr(valueStart, valueEnd - valueStart));
+			};
+
+			std::string fileNameStar = readParamValue("filename*=");
+			if (!fileNameStar.empty()) {
+				const size_t markerPos = fileNameStar.find("''");
+				if (markerPos != std::string::npos) {
+					fileNameStar = fileNameStar.substr(markerPos + 2);
+				}
+				std::string decoded = decodeUrlComponent(fileNameStar);
+				if (!decoded.empty()) return decoded;
+			}
+
+			std::string fileName = readParamValue("filename=");
+			if (fileName.empty()) return "";
+			if (!isLikelyUtf8(fileName)) {
+				fileName = latin1ToUtf8(fileName);
+			}
+			return fileName;
 		};
 
 		auto isAuthorized = [&](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) -> bool {
@@ -125,8 +256,8 @@ int main() {
 			return [&, handler](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 				if (!isAuthorized(req, res)) return;
 				handler(req, res);
+				};
 			};
-		};
 
 		std::mutex inviteCodeMutex;
 		auto consumeInviteCode = [&](const std::string& registerCode, std::string& info, bool& internalError) -> bool {
@@ -361,7 +492,7 @@ int main() {
 			
 		};
 
-        auto handleConvertUpload = [&logger, &nConverter, &convertRawFileMutex, &userManager, &getHeaderIgnoreCase](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+        auto handleConvertUpload = [&logger, &nConverter, &convertRawFileMutex, &userManager, &getHeaderIgnoreCase, &parseMultipartFileName](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value responseJson;
 			std::string uploader;
 			{
@@ -458,35 +589,14 @@ int main() {
 				return;
 			}
 
-			const std::string partHeaders = req.body.substr(headersStart, headersEnd - headersStart);
-			const size_t filenamePos = partHeaders.find("filename=");
-			if (filenamePos == std::string::npos) {
+           const std::string partHeaders = req.body.substr(headersStart, headersEnd - headersStart);
+			std::string fileName = sanitizeFilename(parseMultipartFileName(partHeaders));
+			if (fileName.empty()) {
 				responseJson["success"] = false;
 				responseJson["message"] = "No file found in request.";
 				res.SendJson(Json::FastWriter().write(responseJson), 400);
 				return;
 			}
-
-			size_t fileNameStart = filenamePos + 9;
-			std::string fileName;
-			if (fileNameStart < partHeaders.size() && partHeaders[fileNameStart] == '"') {
-				++fileNameStart;
-				const size_t quoteEnd = partHeaders.find('"', fileNameStart);
-				if (quoteEnd == std::string::npos) {
-					responseJson["success"] = false;
-					responseJson["message"] = "Invalid filename in multipart request.";
-					res.SendJson(Json::FastWriter().write(responseJson), 400);
-					return;
-				}
-				fileName = partHeaders.substr(fileNameStart, quoteEnd - fileNameStart);
-			}
-			else {
-				const size_t valueEnd = partHeaders.find(';', fileNameStart);
-				fileName = partHeaders.substr(fileNameStart, valueEnd - fileNameStart);
-			}
-
-
-			fileName = sanitizeFilename(fileName);
 			std::string ext = getLowerExt(fileName);
 
 			if (ext != ".ncm") {
@@ -549,7 +659,7 @@ int main() {
 			responseJson["message"] = "File uploaded successfully.";
 			responseJson["filename"] = fileName;
 
-          if (!nConverter.addPendingDatabase(fileName, fileHash, fileContent.size(), uploader)) {
+			if (!nConverter.addPendingDatabase(fileName, fileHash, fileContent.size(), uploader)) {
 				responseJson["success"] = false;
 				responseJson["message"] = "Failed to add pending conversion to database.";
 				{
@@ -570,12 +680,23 @@ int main() {
 		auto handleConvertRefresh = [&nConverter](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value responseJson;
 			responseJson["success"] = true;
+            auto decodeDbSafeName = [](const std::string& encodedName) {
+				std::string source = encodedName;
+				if (source.rfind("b64:", 0) == 0) {
+					source = source.substr(4);
+				}
+				std::string decoded;
+				if (Base64::Decode(source, decoded).empty() && !decoded.empty()) {
+					return decoded;
+				}
+				return encodedName;
+			};
 			auto pending = nConverter.getConverterPending();
 			std::reverse(pending.begin(), pending.end());
 			for (const auto& record : pending) {
 				if (record.at("status") == "1") continue;
 				Json::Value pendingJson;
-				pendingJson["filename"] = record.at("file_name");
+               pendingJson["filename"] = decodeDbSafeName(record.at("file_name"));
 				pendingJson["uniqueid"] = record.at("unique_id");
 				pendingJson["filesize"] = record.at("file_size");
 				pendingJson["updater"] = record.at("user_id");
@@ -738,11 +859,22 @@ int main() {
 		auto handleConvertedRefresh = [&nConverter](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value responseJson;
 			responseJson["success"] = true;
+         auto decodeDbSafeName = [](const std::string& encodedName) {
+				std::string source = encodedName;
+				if (source.rfind("b64:", 0) == 0) {
+					source = source.substr(4);
+				}
+				std::string decoded;
+				if (Base64::Decode(source, decoded).empty() && !decoded.empty()) {
+					return decoded;
+				}
+				return encodedName;
+			};
 			auto converted = nConverter.getConverted();
 			std::reverse(converted.begin(), converted.end());
 			for (const auto& record : converted) {
 				Json::Value convertedJson;
-				convertedJson["filename"] = record.at("file_raw_name");
+             convertedJson["filename"] = decodeDbSafeName(record.at("file_raw_name"));
 				convertedJson["uniqueid"] = record.at("file_name");
 				convertedJson["format"] = record.at("file_format");
 				convertedJson["picture_hash"] = record.at("picture_hash");
@@ -869,7 +1001,7 @@ int main() {
 				return;
 			}
 
-         auto decodeBase64Name = [](const std::string& encoded) {
+			auto decodeBase64Name = [](const std::string& encoded) {
 				std::string source = encoded;
 				if (source.rfind("b64:", 0) == 0) {
 					source = source.substr(4);
@@ -882,11 +1014,11 @@ int main() {
 			};
 
 			std::string format;
-          std::string rawName;
+			std::string rawName;
 			for (const auto& record : nConverter.getConverted()) {
 				auto itUnique = record.find("file_name");
 				auto itFormat = record.find("file_format");
-             auto itRawName = record.find("file_raw_name");
+				auto itRawName = record.find("file_raw_name");
 				if (itUnique != record.end() && itFormat != record.end() && itUnique->second == uniqueid) {
 					format = itFormat->second;
                   if (itRawName != record.end()) rawName = itRawName->second;
@@ -1068,58 +1200,7 @@ int main() {
 			responseJson["data"]["mime"] = (lowerFormat == "flac") ? "audio/flac" : "audio/mpeg";
 			res.SendJson(Json::FastWriter().write(responseJson));
 			};
-		auto handleConvertedPlayStream = [&nConverter](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
-			auto decodeUrlComponent = [](const std::string& input) -> std::string {
-				std::string out;
-				out.reserve(input.size());
-				for (size_t i = 0; i < input.size(); ++i) {
-					const char ch = input[i];
-					if (ch == '+') {
-						out.push_back(' ');
-						continue;
-					}
-					if (ch == '%' && i + 2 < input.size()) {
-						auto hexValue = [](char c) -> int {
-							if (c >= '0' && c <= '9') return c - '0';
-							if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-							if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-							return -1;
-						};
-						const int hi = hexValue(input[i + 1]);
-						const int lo = hexValue(input[i + 2]);
-						if (hi >= 0 && lo >= 0) {
-							out.push_back(static_cast<char>((hi << 4) | lo));
-							i += 2;
-							continue;
-						}
-					}
-					out.push_back(ch);
-				}
-				return out;
-			};
-
-			auto getQueryParameter = [&decodeUrlComponent](const std::string& rawPath, const std::string& key) -> std::string {
-				const size_t queryPos = rawPath.find('?');
-				if (queryPos == std::string::npos || queryPos + 1 >= rawPath.size()) {
-					return "";
-				}
-				const std::string query = rawPath.substr(queryPos + 1);
-				size_t start = 0;
-				while (start < query.size()) {
-					const size_t end = query.find('&', start);
-					const std::string part = query.substr(start, end == std::string::npos ? std::string::npos : end - start);
-					const size_t eqPos = part.find('=');
-					const std::string name = decodeUrlComponent(part.substr(0, eqPos));
-					if (name == key) {
-						if (eqPos == std::string::npos || eqPos + 1 >= part.size()) return "";
-						return decodeUrlComponent(part.substr(eqPos + 1));
-					}
-					if (end == std::string::npos) break;
-					start = end + 1;
-				}
-				return "";
-			};
-
+		auto handleConvertedPlayStream = [&nConverter, &extractQueryParameter](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			auto getHeaderIgnoreCase = [&req](const std::string& name) -> std::string {
 				std::string lowerName = name;
 				std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
@@ -1135,7 +1216,7 @@ int main() {
 				return "";
 			};
 
-			const std::string uniqueid = getQueryParameter(req.rawPath, "uniqueid");
+            const std::string uniqueid = extractQueryParameter(req.rawPath, "uniqueid");
 			if (uniqueid.empty()) {
 				res.SendText("Invalid uniqueid.", 400);
 				return;
@@ -1249,7 +1330,6 @@ int main() {
 				res.SendJson(Json::FastWriter().write(responseJson), 401);
 			}
 			};
-
 		auto handleRegister = [&logger, &userManager, &consumeInviteCode](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value requestJson = ReadJsonFromString(req.body);
 			const std::string username = requestJson["username"].asString();
@@ -1289,7 +1369,6 @@ int main() {
 				res.SendJson(Json::FastWriter().write(responseJson), 400);
 			}
 			};
-
 		auto handleLogout = [&](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			std::string token = getHeaderIgnoreCase(req, "X-Token");
 			if (token.empty()) {
@@ -1321,7 +1400,6 @@ int main() {
 			responseJson["message"] = "Logout successful.";
 			res.SendJson(Json::FastWriter().write(responseJson));
 			};
-
 		auto handleDeleteAccount = [&](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			std::string token = getHeaderIgnoreCase(req, "X-Token");
 			if (token.empty()) {
@@ -1361,7 +1439,6 @@ int main() {
            responseJson["message"] = "Account deletion successful.";
 			res.SendJson(Json::FastWriter().write(responseJson));
 			};
-
 		auto handleTestShowInfo = [&userManager](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
 			Json::Value responseJson;
 			responseJson["success"] = true;
@@ -1385,6 +1462,601 @@ int main() {
 
 			res.SendJson(Json::FastWriter().write(responseJson));
 			};
+
+		auto handleFileUpload = [&logger, &fManager, &fileOpMutex, &userManager, &getHeaderIgnoreCase, &parseMultipartFileName](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value responseJson;
+			std::string uploader;
+			{
+				std::string token = getHeaderIgnoreCase(req, "X-Token");
+				if (token.empty()) {
+					const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+					if (authHeader.rfind("Bearer ", 0) == 0) {
+						token = authHeader.substr(7);
+					}
+				}
+				if (token.empty() || !userManager.getTokenUsername(token, uploader)) {
+					responseJson["success"] = false;
+					responseJson["message"] = "Invalid or missing token.";
+					res.SendJson(Json::FastWriter().write(responseJson), 401);
+					return;
+				}
+			}
+
+			auto sanitizeFilename = [](const std::string& input) -> std::string {
+				if (input.empty()) {
+					return "";
+				}
+
+				size_t pos = input.find_last_of("\\/");
+				std::string base = (pos == std::string::npos) ? input : input.substr(pos + 1);
+
+				base.erase(std::remove(base.begin(), base.end(), '\0'), base.end());
+				return base;
+				};
+
+			auto getLowerExt = [](const std::string& fileName) -> std::string {
+				size_t dot = fileName.find_last_of('.');
+				if (dot == std::string::npos || dot + 1 >= fileName.size()) {
+					return "";
+				}
+
+				std::string ext = fileName.substr(dot);
+				std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+					return static_cast<char>(std::tolower(c));
+					});
+				return ext;
+				};
+
+			auto getHeaderIgnoreCase = [&req](const std::string& name) -> std::string {
+				for (const auto& [k, v] : req.headers) {
+					std::string lowerKey = k;
+					std::transform(lowerKey.begin(), lowerKey.end(), lowerKey.begin(), [](unsigned char c) {
+						return static_cast<char>(std::tolower(c));
+						});
+					std::string lowerName = name;
+					std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) {
+						return static_cast<char>(std::tolower(c));
+						});
+					if (lowerKey == lowerName) return v;
+				}
+				return "";
+				};
+
+			const std::string contentType = getHeaderIgnoreCase("Content-Type");
+			const size_t boundaryPos = contentType.find("boundary=");
+			if (boundaryPos == std::string::npos) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Invalid upload request: missing multipart boundary.";
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+			std::string boundary = contentType.substr(boundaryPos + 9);
+			if (!boundary.empty() && boundary.front() == '"' && boundary.back() == '"') {
+				boundary = boundary.substr(1, boundary.size() - 2);
+			}
+
+			const std::string delimiter = "--" + boundary;
+			const size_t partStart = req.body.find(delimiter);
+			if (partStart == std::string::npos) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Invalid multipart body.";
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+			size_t headersStart = partStart + delimiter.size();
+			if (req.body.compare(headersStart, 2, "\r\n") == 0) headersStart += 2;
+			const size_t headersEnd = req.body.find("\r\n\r\n", headersStart);
+			if (headersEnd == std::string::npos) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Invalid multipart headers.";
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+           const std::string partHeaders = req.body.substr(headersStart, headersEnd - headersStart);
+			std::string rawFileName = sanitizeFilename(parseMultipartFileName(partHeaders));
+			if (rawFileName.empty()) {
+				responseJson["success"] = false;
+				responseJson["message"] = "No file found in request.";
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+			std::string ext = getLowerExt(rawFileName);
+			if (!ext.empty() && ext.front() == '.') {
+				ext.erase(ext.begin());
+			}
+
+			std::string mimeType = fManager.getMimeType(ext);
+
+			const size_t fileDataStart = headersEnd + 4;
+			const size_t fileDataEnd = req.body.find("\r\n" + delimiter, fileDataStart);
+			if (fileDataEnd == std::string::npos || fileDataEnd < fileDataStart) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Invalid multipart file content.";
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+			const std::string fileContent = req.body.substr(fileDataStart, fileDataEnd - fileDataStart);
+			const std::filesystem::path outputDir = std::filesystem::path("files");
+			std::filesystem::create_directories(outputDir);
+
+			std::string fileHash = Sha256::Hex(fileContent);
+
+           std::string fileName = Base64::Encode(rawFileName);
+			std::string headerType = getHeaderIgnoreCase("X-File-PublicType");
+			std::string fileType;
+			if (headerType == "true") fileType = "PUB";
+			else if (headerType == "false") fileType = "PRI";
+			else {
+				responseJson["success"] = false;
+				responseJson["message"] = "Invalid or missing X-File-PublicType header: " + headerType;
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+			if (!fManager.dbFileExists(fileHash)) {
+				if (!fManager.dbAddNewFile(fileHash, fileContent.size(), mimeType, fileType, fileName)) {
+					responseJson["success"] = false;
+					responseJson["message"] = "Failed to save file metadata.";
+					res.SendJson(Json::FastWriter().write(responseJson), 500);
+					return;
+				}
+			}
+
+			if (!fManager.dbAddNewUserRelation(uploader, fileHash, fileName)) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Failed to save user-file relation.";
+				res.SendJson(Json::FastWriter().write(responseJson), 500);
+				return;
+			}
+
+			const std::filesystem::path outputPath = outputDir / fileHash;
+
+			{
+				std::scoped_lock lock(fileOpMutex);
+				std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
+				if (!output.is_open()) {
+					responseJson["success"] = false;
+					responseJson["message"] = "Failed to save uploaded file.";
+					res.SendJson(Json::FastWriter().write(responseJson), 500);
+					return;
+				}
+
+				output.write(fileContent.data(), static_cast<std::streamsize>(fileContent.size()));
+				output.close();
+			}
+
+			logger.Info("Write file: " + outputPath.string() + " completed.");
+
+			responseJson["success"] = true;
+			responseJson["message"] = "File uploaded successfully.";
+			responseJson["filename"] = fileName;
+
+			res.SendJson(Json::FastWriter().write(responseJson));
+			};
+		auto handleFileRefresh = [&logger, &fManager, &userManager, &getHeaderIgnoreCase](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value responseJson;
+			std::string username;
+			{
+				std::string token = getHeaderIgnoreCase(req, "X-Token");
+				if (token.empty()) {
+					const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+					if (authHeader.rfind("Bearer ", 0) == 0) {
+						token = authHeader.substr(7);
+					}
+				}
+				if (token.empty() || !userManager.getTokenUsername(token, username)) {
+					responseJson["success"] = false;
+					responseJson["message"] = "Invalid or missing token.";
+					res.SendJson(Json::FastWriter().write(responseJson), 401);
+					return;
+				}
+			}
+
+			std::vector<std::map<std::string, std::string>> files;
+			if (!fManager.dbGetUserFilelist(username, files)) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Failed to retrieve user files.";
+				res.SendJson(Json::FastWriter().write(responseJson), 500);
+				return;
+			}
+			for (const auto& file : files) {
+				Json::Value item;
+				for (const auto& [key, value] : file) {
+					item[key] = value;
+				}
+				responseJson["files"].append(item);
+			}
+			responseJson["success"] = true;
+			res.SendJson(Json::FastWriter().write(responseJson));
+			};
+		auto handlePublicFileRefresh = [&logger, &fManager](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value responseJson;
+			std::vector<std::map<std::string, std::string>> files;
+			if (!fManager.dbGetPublicFileList(files)) {
+				responseJson["success"] = false;
+				responseJson["message"] = "Failed to retrieve public files.";
+				res.SendJson(Json::FastWriter().write(responseJson), 500);
+				return;
+			}
+			for (const auto& file : files) {
+				Json::Value item;
+				for (const auto& [key, value] : file) {
+					item[key] = value;
+				}
+				responseJson["files"].append(item);
+			}
+			responseJson["success"] = true;
+			res.SendJson(Json::FastWriter().write(responseJson));
+			};
+		auto handleFileDownload = [&fManager, &userManager, &getHeaderIgnoreCase](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string user_fileid = requestJson["user_file_id"].asString();
+			std::string username;
+			{
+				std::string token = getHeaderIgnoreCase(req, "X-Token");
+				if (token.empty()) {
+					const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+					if (authHeader.rfind("Bearer ", 0) == 0) {
+						token = authHeader.substr(7);
+					}
+				}
+				if (token.empty() || !userManager.getTokenUsername(token, username)) {
+					res.SendText("Invalid or missing token.", 401);
+					return;
+				}
+			}
+			std::string fileName, mimeType;
+			std::map<std::string, std::string> fileInfo;
+			if (!fManager.dbGetFileInfo(username, user_fileid, fileInfo)) {
+				res.SendText("File not found.", 404);
+				return;
+			}
+
+			const std::filesystem::path filePath = std::filesystem::path("files") / fileInfo["file_hash"];
+			if (!std::filesystem::exists(filePath) || !std::filesystem::is_regular_file(filePath)) {
+				res.SendText("File not found on server.", 404);
+				fManager.dbDeleteFile(username, user_fileid, fileInfo["file_hash"], fileInfo["file_name"]);
+				return;
+			}
+           auto accessGuard = fManager.holdFileAccess(fileInfo["file_hash"]);
+			res.SendFileDownload(filePath.string(), Base64::Decode(fileInfo["own_name"]), fileInfo["mime_type"]);
+			};
+		auto handleFileDelete = [&fManager, &userManager, &getHeaderIgnoreCase](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string user_fileid = requestJson["user_file_id"].asString();
+			std::string username;
+			{
+				std::string token = getHeaderIgnoreCase(req, "X-Token");
+				if (token.empty()) {
+					const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+					if (authHeader.rfind("Bearer ", 0) == 0) {
+						token = authHeader.substr(7);
+					}
+				}
+				if (token.empty() || !userManager.getTokenUsername(token, username)) {
+					res.SendText("Invalid or missing token.", 401);
+					return;
+				}
+			}
+			std::map<std::string, std::string> fileInfo;
+			if (!fManager.dbGetFileInfo(username, user_fileid, fileInfo)) {
+				res.SendText("File not found.", 404);
+				return;
+			}
+          std::string deleteInfo;
+			if (!fManager.dbDeleteFile(username, user_fileid, fileInfo["file_hash"], deleteInfo)) {
+				res.SendText("Failed to delete file.", 500);
+				return;
+			}
+			res.SendText("File deleted successfully.");
+			};
+		auto handlePublicFileDownload = [&fManager](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string fileHash = requestJson["file_hash"].asString();
+			if (fileHash.empty()) {
+				res.SendText("Invalid file hash.", 400);
+				return;
+			}
+
+			std::map<std::string, std::string> fileInfo;
+			if (!fManager.dbGetPublicFileInfo(fileHash, fileInfo)) {
+				res.SendText("Public file not found.", 404);
+				return;
+			}
+
+			const std::filesystem::path filePath = std::filesystem::path("files") / fileHash;
+			if (!std::filesystem::exists(filePath) || !std::filesystem::is_regular_file(filePath)) {
+				res.SendText("File not found on server.", 404);
+				return;
+			}
+			auto accessGuard = fManager.holdFileAccess(fileHash);
+
+			auto decodeBase64Name = [](const std::string& encoded) {
+				std::string source = encoded;
+				if (source.rfind("b64:", 0) == 0) {
+					source = source.substr(4);
+				}
+				std::string decoded;
+				if (Base64::Decode(source, decoded).empty()) {
+					return decoded;
+				}
+				return encoded;
+			};
+
+			std::string requestFileName = requestJson["file_name"].asString();
+			std::string downloadName = decodeBase64Name(requestFileName);
+			if (downloadName.empty()) {
+				downloadName = decodeBase64Name(fileInfo["file_raw_name"]);
+			}
+			if (downloadName.empty()) {
+				downloadName = fileHash;
+			}
+
+			res.SendFileDownload(filePath.string(), downloadName, fileInfo["mime_type"]);
+		};
+		auto handlePublicFileDelete = [&fManager](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string fileHash = requestJson["file_hash"].asString();
+			if (fileHash.empty()) {
+				res.SendText("Invalid file hash.", 400);
+				return;
+			}
+
+			std::string info;
+			if (!fManager.dbDeletePublicFile(fileHash, info)) {
+				res.SendText(info.empty() ? "Failed to delete public file." : info, 500);
+				return;
+			}
+
+			res.SendText("Public file deleted successfully.");
+		};
+       auto handleFileToPrivate = [&fManager, &userManager, &getHeaderIgnoreCase](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string fileHash = requestJson["file_hash"].asString();
+			std::string username;
+			{
+				std::string token = getHeaderIgnoreCase(req, "X-Token");
+				if (token.empty()) {
+					const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+					if (authHeader.rfind("Bearer ", 0) == 0) {
+						token = authHeader.substr(7);
+					}
+				}
+				if (token.empty() || !userManager.getTokenUsername(token, username)) {
+					Json::Value responseJson;
+					responseJson["success"] = false;
+					responseJson["message"] = "Invalid or missing token.";
+					res.SendJson(Json::FastWriter().write(responseJson), 401);
+					return;
+				}
+			}
+
+			Json::Value responseJson;
+			std::string info;
+			if (!fManager.dbChangeFileType(username, fileHash, "PRI", info)) {
+				responseJson["success"] = false;
+				responseJson["message"] = info.empty() ? "Failed to convert file to private." : info;
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+			responseJson["success"] = true;
+			responseJson["message"] = "File converted to private.";
+			res.SendJson(Json::FastWriter().write(responseJson));
+		};
+		auto handleFileToPublic = [&fManager, &userManager, &getHeaderIgnoreCase](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string fileHash = requestJson["file_hash"].asString();
+			std::string username;
+			{
+				std::string token = getHeaderIgnoreCase(req, "X-Token");
+				if (token.empty()) {
+					const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+					if (authHeader.rfind("Bearer ", 0) == 0) {
+						token = authHeader.substr(7);
+					}
+				}
+				if (token.empty() || !userManager.getTokenUsername(token, username)) {
+					Json::Value responseJson;
+					responseJson["success"] = false;
+					responseJson["message"] = "Invalid or missing token.";
+					res.SendJson(Json::FastWriter().write(responseJson), 401);
+					return;
+				}
+			}
+
+			Json::Value responseJson;
+			std::string info;
+			if (!fManager.dbChangeFileType(username, fileHash, "PUB", info)) {
+				responseJson["success"] = false;
+				responseJson["message"] = info.empty() ? "Failed to convert file to public." : info;
+				res.SendJson(Json::FastWriter().write(responseJson), 400);
+				return;
+			}
+
+			responseJson["success"] = true;
+			responseJson["message"] = "File converted to public.";
+			res.SendJson(Json::FastWriter().write(responseJson));
+		};
+		auto handleFileStream = [&fManager, &userManager, &extractQueryParameter, &getHeaderIgnoreCase, &getCookieValue](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			const std::string scope = extractQueryParameter(req.rawPath, "scope");
+			const std::string userFileId = extractQueryParameter(req.rawPath, "user_file_id");
+			const std::string fileHashFromQuery = extractQueryParameter(req.rawPath, "file_hash");
+
+			std::string token = getHeaderIgnoreCase(req, "X-Token");
+			if (token.empty()) {
+				const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+				if (authHeader.rfind("Bearer ", 0) == 0) {
+					token = authHeader.substr(7);
+				}
+			}
+			if (token.empty()) {
+				token = getCookieValue(req, "authToken");
+			}
+
+			std::string username;
+			if (token.empty() || !userManager.getTokenUsername(token, username)) {
+				res.SendText("Invalid or missing token.", 401);
+				return;
+			}
+
+			std::string fileHash = fileHashFromQuery;
+			std::map<std::string, std::string> fileInfo;
+			if (scope == "public") {
+				if (fileHash.empty() || !fManager.dbGetPublicFileInfo(fileHash, fileInfo)) {
+					res.SendText("Public file not found.", 404);
+					return;
+				}
+			}
+			else {
+				if (userFileId.empty() || !fManager.dbGetFileInfo(username, userFileId, fileInfo)) {
+					res.SendText("Private file not found.", 404);
+					return;
+				}
+				fileHash = fileInfo["file_hash"];
+			}
+
+			if (fileHash.empty()) {
+				res.SendText("Invalid file hash.", 400);
+				return;
+			}
+
+			const std::filesystem::path filePath = std::filesystem::path("files") / fileHash;
+			if (!std::filesystem::exists(filePath) || !std::filesystem::is_regular_file(filePath)) {
+				res.SendText("File not found.", 404);
+				return;
+			}
+
+			const std::string rangeHeader = getHeaderIgnoreCase(req, "Range");
+			const std::string mimeType = fileInfo.count("mime_type") ? fileInfo["mime_type"] : "application/octet-stream";
+           auto accessGuard = fManager.holdFileAccess(fileHash);
+			res.SendFileStream(filePath.string(), mimeType, rangeHeader);
+		};
+		auto handleFileCover = [&fManager, &userManager, &getHeaderIgnoreCase](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) {
+			Json::Value requestJson = ReadJsonFromString(req.body);
+			const std::string scope = requestJson["scope"].asString();
+			const std::string userFileId = requestJson["user_file_id"].asString();
+			const std::string fileHashFromBody = requestJson["file_hash"].asString();
+
+			std::string username;
+			{
+				std::string token = getHeaderIgnoreCase(req, "X-Token");
+				if (token.empty()) {
+					const std::string authHeader = getHeaderIgnoreCase(req, "Authorization");
+					if (authHeader.rfind("Bearer ", 0) == 0) {
+						token = authHeader.substr(7);
+					}
+				}
+				if (token.empty() || !userManager.getTokenUsername(token, username)) {
+					res.SendText("Invalid or missing token.", 401);
+					return;
+				}
+			}
+
+			std::string fileHash = fileHashFromBody;
+			std::map<std::string, std::string> fileInfo;
+			if (scope == "public") {
+				if (fileHash.empty() || !fManager.dbGetPublicFileInfo(fileHash, fileInfo)) {
+					res.SendText("Public file not found.", 404);
+					return;
+				}
+			}
+			else {
+				if (userFileId.empty() || !fManager.dbGetFileInfo(username, userFileId, fileInfo)) {
+					res.SendText("Private file not found.", 404);
+					return;
+				}
+				fileHash = fileInfo["file_hash"];
+			}
+
+			if (fileHash.empty()) {
+				res.SendText("Invalid file hash.", 400);
+				return;
+			}
+
+			const std::filesystem::path filePath = std::filesystem::path("files") / fileHash;
+			if (!std::filesystem::exists(filePath) || !std::filesystem::is_regular_file(filePath)) {
+				res.SendText("File not found.", 404);
+				return;
+			}
+			auto accessGuard = fManager.holdFileAccess(fileHash);
+
+			auto extractEmbeddedCoverData = [](const std::filesystem::path& path, const std::string& mimeHint, std::string& imageData, std::string& mimeType) -> bool {
+				auto tryExtractFromMp3 = [&](const std::filesystem::path& audioPath) -> bool {
+					TagLib::MPEG::File audioFile(audioPath.string().c_str());
+					if (!audioFile.isValid()) return false;
+					TagLib::ID3v2::Tag* tag = audioFile.ID3v2Tag();
+					if (!tag) return false;
+					auto frames = tag->frameListMap()["APIC"];
+					if (frames.isEmpty()) return false;
+					auto* frame = dynamic_cast<TagLib::ID3v2::AttachedPictureFrame*>(frames.front());
+					if (!frame) return false;
+					TagLib::ByteVector data = frame->picture();
+					if (data.isEmpty()) return false;
+					imageData.assign(data.data(), static_cast<size_t>(data.size()));
+					mimeType = frame->mimeType().to8Bit(true);
+					if (mimeType.empty()) mimeType = "image/jpeg";
+					return true;
+				};
+
+				auto tryExtractFromFlac = [&](const std::filesystem::path& audioPath) -> bool {
+					TagLib::FLAC::File audioFile(audioPath.string().c_str());
+					if (!audioFile.isValid()) return false;
+					auto pictures = audioFile.pictureList();
+					if (pictures.isEmpty()) return false;
+					TagLib::FLAC::Picture* picture = pictures.front();
+					if (!picture) return false;
+					TagLib::ByteVector data = picture->data();
+					if (data.isEmpty()) return false;
+					imageData.assign(data.data(), static_cast<size_t>(data.size()));
+					mimeType = picture->mimeType().to8Bit(true);
+					if (mimeType.empty()) mimeType = "image/jpeg";
+					return true;
+				};
+
+				std::string lowerMime = mimeHint;
+				std::transform(lowerMime.begin(), lowerMime.end(), lowerMime.begin(), [](unsigned char c) {
+					return static_cast<char>(std::tolower(c));
+				});
+
+				if (lowerMime.find("flac") != std::string::npos) {
+					if (tryExtractFromFlac(path)) return true;
+					if (tryExtractFromMp3(path)) return true;
+					return false;
+				}
+
+				if (lowerMime.find("mpeg") != std::string::npos || lowerMime.find("mp3") != std::string::npos) {
+					if (tryExtractFromMp3(path)) return true;
+					if (tryExtractFromFlac(path)) return true;
+					return false;
+				}
+
+				if (tryExtractFromMp3(path)) return true;
+				if (tryExtractFromFlac(path)) return true;
+				return false;
+			};
+
+			std::string imageData;
+			std::string mimeType;
+         const std::string mimeHint = fileInfo.count("mime_type") ? fileInfo["mime_type"] : "";
+			if (!extractEmbeddedCoverData(filePath, mimeHint, imageData, mimeType)) {
+				Json::Value responseJson;
+				responseJson["success"] = false;
+				responseJson["message"] = "No embedded cover found.";
+				res.SendJson(Json::FastWriter().write(responseJson), 404);
+				return;
+			}
+
+			Json::Value responseJson;
+			responseJson["success"] = true;
+			responseJson["data"]["image"] = "data:" + mimeType + ";base64," + Base64::Encode(imageData);
+			res.SendJson(Json::FastWriter().write(responseJson));
+		};
 
 		server.On("/reservation", [&](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/reservation
 			std::string token = getHeaderIgnoreCase(req, "X-Token");
@@ -1428,21 +2100,37 @@ int main() {
 			});
 
 		server.On("/api/rsa/publickey", handleLoginRsaPublicKey);
-      server.On("/api/rsa/encrypt", handleLoginVarifyEncrypt);
+		server.On("/api/rsa/encrypt", handleLoginVarifyEncrypt);
 		server.On("/api/execution", handleLoginExecution);
 
 		server.On("/api/login", handleLogin);
-		server.On("/api/register", handleRegister);
 		server.On("/api/logout", handleLogout);
 		server.On("/api/account/delete", handleDeleteAccount);
 
 		server.On("/register", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/register
 			res.SendFile("./html/register.html", "text/html");
 			});
+		server.On("/api/register", handleRegister);
 
 		server.On("/", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/login
 			res.SendFile("./html/index.html", "text/html");
 			});
+
+		server.On("/file", [](const HttpServer::HttpRequest& req, HttpServer::HttpResponse& res) { //http://localhost:8027/file
+			res.SendFile("./html/file.html", "text/html");
+			});
+
+		server.On("/api/file/upload", withAuth(handleFileUpload));
+		server.On("/api/file/refresh", withAuth(handleFileRefresh));
+		server.On("/api/file/public/refresh", withAuth(handlePublicFileRefresh));
+		server.On("/api/file/download", withAuth(handleFileDownload));
+		server.On("/api/file/delete", withAuth(handleFileDelete));
+     server.On("/api/file/toprivate", withAuth(handleFileToPrivate));
+		server.On("/api/file/topublic", withAuth(handleFileToPublic));
+		server.On("/api/file/public/download", withAuth(handlePublicFileDownload));
+		server.On("/api/file/public/delete", withAuth(handlePublicFileDelete));
+		server.On("/api/file/stream", withAuth(handleFileStream));
+		server.On("/api/file/cover", withAuth(handleFileCover));
 
         server.On("/test/showinfo", withAuth(handleTestShowInfo));
 

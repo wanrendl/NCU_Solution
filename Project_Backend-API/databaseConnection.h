@@ -23,6 +23,7 @@
 #include <map>
 #include <set>
 #include <cctype>
+#include <sstream>
 
 #ifdef _MSC_VER
 #pragma comment(lib, "../../../../libraries/MySQL/lib64/vs14/mysqlcppconn.lib")
@@ -117,7 +118,7 @@ public:
 
 		try {
 			std::unique_ptr<sql::Connection> conn(driver->connect(host_, user_, password_));
-          configureUtf8mb4(conn.get());
+		  configureUtf8mb4(conn.get());
 			if (logger_) logger_->Info("Connected to MySQL server for verification.");
 
 			// 检查数据库是否存在
@@ -138,7 +139,9 @@ public:
 				{"reservations_processing", {"unique_id", "reservation_madetime", "reservation_court", "reservation_date", "reservation_time"}},
 				{"reservations_finished", {"id", "status", "reservation_court", "reservation_date", "reservation_time", "details", "finished_at"}},
 				{"converter_pending", {"unique_id", "user_id", "file_name", "file_size", "status"}},
-				{"converter_finished", {"user_id", "file_name", "file_raw_name", "file_format", "file_size", "picture_hash", "finished_at"}}
+				{"converter_finished", {"user_id", "file_name", "file_raw_name", "file_format", "file_size", "picture_hash", "finished_at"}},
+				{"file_list", {"id", "file_hash", "file_raw_name", "file_size", "mime_type", "type", "created_at"}},
+				{"user_files", {"id", "user_id", "file_hash", "own_name", "uploaded_at"}}
 			};
 
 			// 读取当前数据库所有表
@@ -225,7 +228,7 @@ public:
 			if (logger_) logger_->Error(std::string("Query failed: ") + e.what());
 			return nullptr;
 		}
-       catch (std::exception& e) {
+	   catch (std::exception& e) {
 			if (logger_) logger_->Error(std::string("Query failed: ") + e.what());
 			return nullptr;
 		}
@@ -248,7 +251,7 @@ public:
 			if (logger_) logger_->Error(std::string("Update failed: ") + e.what());
 			return -1;
 		}
-       catch (std::exception& e) {
+	   catch (std::exception& e) {
 			if (logger_) logger_->Error(std::string("Update failed: ") + e.what());
 			return -1;
 		}
@@ -348,7 +351,7 @@ public:
 		std::string sql = "SELECT 1 FROM " + table +
 			" WHERE " + conditionColumn + " = '" + escapeString(conditionValue) + "' LIMIT 1";
 		auto res = query(sql);
-		return res && res->next();
+		return res && res->next();// 如果查询成功且有结果，说明记录存在
 	}
 
 	bool searchExistsStatus(const std::string& table,
@@ -372,11 +375,11 @@ public:
 	}
 
 	/**
- * @brief 插入一条记录（使用预处理语句）
- * @param table 表名
- * @param fields 字段名 -> 值的映射
- * @return 插入的自增ID（若表有自增主键），失败返回 -1
- */
+	 * @brief 插入一条记录（使用预处理语句）
+	 * @param table 表名
+	 * @param fields 字段名 -> 值的映射
+	 * @return 插入的自增ID（若表有自增主键），失败返回 -1
+	 */
 	int64_t insert(const std::string& table, const std::map<std::string, std::string>& fields) {
 		if (fields.empty()) {
 			if (logger_) logger_->Error("Insert failed: fields map is empty.");
@@ -438,7 +441,7 @@ public:
 			if (logger_) logger_->Error(std::string("Insert failed: ") + e.what());
 			return -1;
 		}
-       catch (std::exception& e) {
+	   catch (std::exception& e) {
 			if (logger_) logger_->Error(std::string("Insert failed: ") + e.what());
 			return -1;
 		}
@@ -491,7 +494,7 @@ public:
 			if (logger_) logger_->Error(std::string("Update failed: ") + e.what());
 			return -1;
 		}
-       catch (std::exception& e) {
+	   catch (std::exception& e) {
 			if (logger_) logger_->Error(std::string("Update failed: ") + e.what());
 			return -1;
 		}
@@ -529,7 +532,41 @@ public:
 			if (logger_) logger_->Error(std::string("Delete failed: ") + e.what());
 			return -1;
 		}
-       catch (std::exception& e) {
+		catch (std::exception& e) {
+			if (logger_) logger_->Error(std::string("Delete failed: ") + e.what());
+			return -1;
+		}
+	}
+	int removeConditions(const std::string& table, const std::map<std::string, std::string>& conditions) {
+		if (conditions.empty()) {
+			if (logger_) logger_->Error("Remove failed: conditions map is empty (would delete all rows).");
+			return -1;
+		}
+		auto conn = createConnection();
+		if (!conn) return -1;
+		std::string conditionStr;
+		std::vector<std::string> conditionValues;
+		for (auto it = conditions.begin(); it != conditions.end(); ++it) {
+			conditionStr += it->first + " = ?";
+			conditionValues.push_back(it->second);
+			if (std::next(it) != conditions.end()) {
+				conditionStr += " AND ";
+			}
+		}
+		std::string sql = "DELETE FROM " + table + " WHERE " + conditionStr;
+		try {
+			std::unique_ptr<sql::PreparedStatement> pstmt(conn->prepareStatement(sql));
+			int index = 1;
+			for (const auto& val : conditionValues) {
+				pstmt->setString(index++, val);
+			}
+			return pstmt->executeUpdate();
+		}
+		catch (sql::SQLException& e) {
+			if (logger_) logger_->Error(std::string("Delete failed: ") + e.what());
+			return -1;
+		}
+		catch (std::exception& e) {
 			if (logger_) logger_->Error(std::string("Delete failed: ") + e.what());
 			return -1;
 		}
@@ -575,6 +612,118 @@ public:
 		return result;
 	}
 
+	bool fetchSpecific(const std::string& table, const std::string& conditionColumn, const std::string& conditionValue, std::vector<std::map<std::string, std::string>>& result) {
+		auto conn = createConnection();
+		if (!conn) return false;
+		std::string sql = "SELECT * FROM " + table + " WHERE " + conditionColumn + " = '" + escapeString(conditionValue) + "'";
+		try {
+			std::unique_ptr<sql::Statement> stmt(conn->createStatement());
+			std::unique_ptr<sql::ResultSet> res(stmt->executeQuery(sql));
+			sql::ResultSetMetaData* meta = res->getMetaData();
+			int colCount = meta->getColumnCount();
+			while (res->next()) {
+				std::map<std::string, std::string> row;
+				for (int i = 1; i <= colCount; ++i) {
+					std::string colName = meta->getColumnName(i);
+					std::string value = res->getString(i);
+					row[colName] = value;
+				}
+				result.push_back(std::move(row));
+			}
+		}
+		catch (sql::SQLException& e) {
+			if (logger_) logger_->Error(std::string("fetchSpecific failed: ") + e.what());
+			return false;
+		}
+		catch (std::exception& e) {
+			if (logger_) logger_->Error(std::string("fetchSpecific failed: ") + e.what());
+			return false;
+		}
+		return true;
+	}
+	
+	bool fetchFiles(std::string username, std::vector<std::map<std::string, std::string>>& result) {
+		auto conn = createConnection();
+		if (!conn) return false;
+		std::stringstream ssSQL;
+		ssSQL << "SELECT "
+			<< "user_files.id AS user_file_id, "
+			<< "user_files.own_name AS file_name, "
+			<< "user_files.uploaded_at, "
+			<< "file_list.file_hash, "
+			<< "file_list.file_size, "
+			<< "file_list.mime_type "
+			<< "FROM user_files "
+			<< "JOIN file_list ON user_files.file_hash = file_list.file_hash "
+			<< "WHERE user_files.user_id = '" << escapeString(username) << "' AND file_list.type != 'PUB' "
+			<< "ORDER BY user_files.uploaded_at DESC;";
+		try {
+			std::unique_ptr<sql::Statement> stmt(conn->createStatement());
+			std::unique_ptr<sql::ResultSet> res(stmt->executeQuery(ssSQL.str()));
+			sql::ResultSetMetaData* meta = res->getMetaData();
+			int colCount = meta->getColumnCount();
+			while (res->next()) {
+				std::map<std::string, std::string> row;
+				for (int i = 1; i <= colCount; ++i) {
+					std::string colName = meta->getColumnName(i);
+					std::string value = res->getString(i);
+					row[colName] = value;
+				}
+				result.push_back(std::move(row));
+			}
+		}
+		catch (sql::SQLException& e) {
+			if (logger_) logger_->Error(std::string("fetchSpecific failed: ") + e.what());
+			return false;
+		}
+		catch (std::exception& e) {
+			if (logger_) logger_->Error(std::string("fetchSpecific failed: ") + e.what());
+			return false;
+		}
+		return true;
+	}
+
+	bool fetchSpecificFileInfo(const std::string& user_id, const std::string& user_fileid, std::map<std::string, std::string> &result) {
+		/*
+		SELECT file_list.storage_path, file_list.file_size, file_list.mime_type
+		FROM user_files
+		JOIN file_list ON user_files.file_hash = file_list.file_hash
+		WHERE user_files.user_id = [user_id] AND user_files.id = [user_file_id];
+		*/
+
+		auto conn = createConnection();
+		if (!conn) return false;
+
+		std::stringstream ssSQL;
+		ssSQL << "SELECT file_list.file_hash, file_list.file_size, file_list.mime_type, user_files.own_name "
+			<< "FROM user_files "
+			<< "JOIN file_list ON user_files.file_hash = file_list.file_hash "
+			<< "WHERE user_files.user_id = '" << escapeString(user_id) << "' AND user_files.id = '" << escapeString(user_fileid) << "' LIMIT 1";
+		
+		try {
+			std::unique_ptr<sql::Statement> stmt(conn->createStatement());
+			std::unique_ptr<sql::ResultSet> res(stmt->executeQuery(ssSQL.str()));
+			if (res->next()) {
+				sql::ResultSetMetaData* meta = res->getMetaData();
+				int colCount = meta->getColumnCount();
+				for (int i = 1; i <= colCount; ++i) {
+					std::string colName = meta->getColumnName(i);
+					std::string value = res->getString(i);
+					result[colName] = value;
+				}
+			}
+		}
+		catch (sql::SQLException& e) {
+			if (logger_) logger_->Error(std::string("fetchSpecificFileInfo failed: ") + e.what());
+			result.clear();
+		}
+		catch (std::exception& e) {
+			if (logger_) logger_->Error(std::string("fetchSpecificFileInfo failed: ") + e.what());
+			result.clear();
+		}
+		return !result.empty();
+	}
+
 	std::map<std::string, std::string> fetchOne(const std::string& table, const std::string& conditionColumn, const std::string& conditionValue) {
 		std::map<std::string, std::string> result;
 		auto conn = createConnection();
@@ -603,7 +752,15 @@ public:
 		}
 		return result;
 	}
-
+public:
+	std::string escapeString(const std::string& str) const {
+		std::string escaped;
+		for (char c : str) {
+			if (c == '\'') escaped += "\\'";
+			else escaped += c;
+		}
+		return escaped;
+	}
 private:
 	std::string host_;
 	std::string user_;
@@ -631,7 +788,7 @@ private:
 
 		try {
 			std::unique_ptr<sql::Connection> conn(driver->connect(host_, user_, password_));
-           configureUtf8mb4(conn.get());
+			configureUtf8mb4(conn.get());
 			conn->setSchema(dbName_);
 			return conn;
 		}
@@ -641,20 +798,11 @@ private:
 		}
 	}
 
-	std::string escapeString(const std::string& str) const {
-		std::string escaped;
-		for (char c : str) {
-			if (c == '\'') escaped += "\\'";
-			else escaped += c;
-		}
-		return escaped;
-	}
-
 	bool createDatabase(sql::Connection* conn) {
 		std::unique_ptr<sql::Statement> stmt(conn->createStatement());
-       std::string sql = "CREATE DATABASE IF NOT EXISTS " + dbName_ + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+		std::string sql = "CREATE DATABASE IF NOT EXISTS " + dbName_ + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
 		stmt->execute(sql);
-      stmt->execute("ALTER DATABASE " + dbName_ + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+		stmt->execute("ALTER DATABASE " + dbName_ + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
 		if (logger_) logger_->Info("Database '" + dbName_ + "' ensured.");
 		return true;
 	}
@@ -744,12 +892,42 @@ private:
 		stmt->execute(sql_converter_finished);
 		if (logger_) logger_->Info("Table 'converter_finished' ensured.");
 
+		//7. 文件列表表
+		std::string sql_file_list = R"(
+			CREATE TABLE IF NOT EXISTS file_list (
+				id BIGINT AUTO_INCREMENT PRIMARY KEY,
+				file_hash VARCHAR(64) NOT NULL UNIQUE,
+				file_size BIGINT NOT NULL,
+				file_raw_name TEXT NOT NULL,
+				mime_type VARCHAR(100) NOT NULL,
+				type VARCHAR(3) NOT NULL,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+		)";
+		stmt->execute(sql_file_list);
+		if (logger_) logger_->Info("Table 'file_list' ensured.");
+
+		//8. 用户文件关联表
+		std::string sql_user_files = R"(
+			CREATE TABLE IF NOT EXISTS user_files (
+				id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				user_id VARCHAR(64) NOT NULL,
+				file_hash VARCHAR(64) NOT NULL,
+				own_name VARCHAR(255) NOT NULL,
+				uploaded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (file_hash) REFERENCES file_list(file_hash) ON DELETE CASCADE,
+				UNIQUE KEY unique_user_file (user_id, file_hash)
+			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+		)";
+		stmt->execute(sql_user_files);
+		if (logger_) logger_->Info("Table 'user_files' ensured.");
+
 		return true;
 	}
 
 	static void configureUtf8mb4(sql::Connection* conn) {
 		if (!conn) return;
-      try {
+	  try {
 			conn->setClientOption("OPT_CHARSET_NAME", "utf8mb4");
 		}
 		catch (...) {}

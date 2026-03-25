@@ -23,10 +23,35 @@
 
         input[type="date"] {
             min-height: 38px;
+            width: 100%;
+            max-width: 100%;
+            display: block;
+            -webkit-appearance: none;
+            appearance: none;
+            padding-right: 36px;
+           text-align: left;
+        }
+
+        input[type="date"]::-webkit-date-and-time-value {
+            text-align: left;
+        }
+
+        input[type="date"]::-webkit-datetime-edit,
+        input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+            display: flex;
+            align-items: center;
+        }
+
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            opacity: 1;
+            cursor: pointer;
         }
 
         select {
             min-height: 38px;
+            width: 100%;
+            max-width: 100%;
+            display: block;
         }
 
        .layout-top {

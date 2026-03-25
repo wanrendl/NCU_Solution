@@ -36,6 +36,11 @@ private:
 				return decoded;
 			}
 		}
+
+		std::string legacyDecoded;
+		if (Base64::Decode(text, legacyDecoded).empty() && !legacyDecoded.empty()) {
+			return legacyDecoded;
+		}
 		return text;
 	}
 public:
@@ -164,7 +169,7 @@ public:
 		std::map<std::string, std::string> writeVal;
 		writeVal["unique_id"] = hash;
 		writeVal["user_id"] = username;
-		writeVal["file_name"] = Base64::Encode(name);
+       writeVal["file_name"] = toDbSafeText(name);
 		writeVal["file_size"] = std::to_string(size);
 		int64_t newId = dbConnection_.insert("converter_pending", writeVal);
 		logger_.Info("Insert database [converter_pending]: " + std::to_string(newId));
@@ -197,7 +202,7 @@ public:
 	bool addFinishedDatabase(std::string raw_name, std::string name, int format, std::string pictureHash, size_t fileSize, std::string username) {
 		std::map<std::string, std::string> writeVal;
 		writeVal["user_id"] = username;
-		writeVal["file_raw_name"] = Base64::Encode(raw_name);
+       writeVal["file_raw_name"] = toDbSafeText(raw_name);
 		writeVal["file_name"] = name;
 		writeVal["picture_hash"] = pictureHash;
 		writeVal["file_size"] = std::to_string(fileSize);

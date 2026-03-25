@@ -91,7 +91,32 @@ public:
 
         return "";
     }
+    static std::string Decode(const std::string& input) {
+        std::string out;
+        size_t in_len = input.size();
+        if (in_len % 4 != 0) return "Input data size is not a multiple of 4";
 
+        size_t out_len = in_len / 4 * 3;
+        if (input[in_len - 1] == '=') out_len--;
+        if (input[in_len - 2] == '=') out_len--;
+
+        out.resize(out_len);
+
+        for (size_t i = 0, j = 0; i < in_len;) {
+            uint32_t a = input[i] == '=' ? 0 & i++ : kDecodingTable[static_cast<int>(input[i++])];
+            uint32_t b = input[i] == '=' ? 0 & i++ : kDecodingTable[static_cast<int>(input[i++])];
+            uint32_t c = input[i] == '=' ? 0 & i++ : kDecodingTable[static_cast<int>(input[i++])];
+            uint32_t d = input[i] == '=' ? 0 & i++ : kDecodingTable[static_cast<int>(input[i++])];
+
+            uint32_t triple = (a << 3 * 6) + (b << 2 * 6) + (c << 1 * 6) + (d << 0 * 6);
+
+            if (j < out_len) out[j++] = (triple >> 2 * 8) & 0xFF;
+            if (j < out_len) out[j++] = (triple >> 1 * 8) & 0xFF;
+            if (j < out_len) out[j++] = (triple >> 0 * 8) & 0xFF;
+        }
+
+        return out;
+    }
 };
 
 #endif /* _MACARON_BASE64_H_ */

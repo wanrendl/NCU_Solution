@@ -154,6 +154,7 @@
     <None Include="convert.html" />
     <None Include="font-awesome.min.css" />
     <None Include="html\convert.html" />
+    <None Include="html\file.html" />
     <None Include="html\index.html" />
     <None Include="html\login.html" />
     <None Include="html\register.html" />
@@ -168,6 +169,7 @@
     <ClInclude Include="aes.h" />
     <ClInclude Include="basic.h" />
     <ClInclude Include="databaseConnection.h" />
+    <ClInclude Include="File.h" />
     <ClInclude Include="HTTPBackend.h" />
     <ClInclude Include="httplib.h" />
     <ClInclude Include="json.h" />

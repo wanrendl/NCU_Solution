@@ -12,3 +12,4 @@
 - 服务端日志仅记录请求的 body 部分，不记录完整原始请求包。
 - 在待支付接口 `/api/pending/delete` 和 `/api/pending/pay` 的请求体中，`uniqueid` 应直接发送为字符串，不使用数组包装。
 - 在待转换列表中，删除与转换接口请求体应发送 `uniqueid`，不发送 `filename`。
+- 在 file.html 的私有文件列表中显示“转公共”按钮。

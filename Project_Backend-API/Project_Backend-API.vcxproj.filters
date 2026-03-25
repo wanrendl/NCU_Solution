@@ -109,6 +109,9 @@
     <None Include="html\index.html">
       <Filter>Resource\html</Filter>
     </None>
+    <None Include="html\file.html">
+      <Filter>Resource\html</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="HTTPBackend.h">
@@ -146,6 +149,9 @@
     </ClInclude>
     <ClInclude Include="tokenManagement.h">
       <Filter>Header\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="File.h">
+      <Filter>Header\functions</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

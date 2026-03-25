@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="./icon.png" type="image/png" />
+    <title>文件管理面板</title>
+    <script src="./tailwindcss.min.js"></script>
+    <link href="./font-awesome.min.css" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        .card-hover {
+            transition: all 0.25s ease;
+        }
+
+        .card-hover:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);
+        }
+
+        .file-name {
+            word-break: break-all;
+        }
+
+        @keyframes cover-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .cover-rotating {
+            animation: cover-spin 8s linear infinite;
+        }
+
+        body {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen m-0 p-0">
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <div class="bg-white rounded-xl shadow p-4 mb-6 card-hover">
+            <div class="flex items-center justify-between">
+                <div class="text-lg font-semibold text-gray-800 flex items-center">
+                    <i class="fa fa-folder-open text-indigo-600 mr-2"></i>File Manager
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="top-username" class="inline-block px-3 py-1 text-sm rounded border border-green-500 text-green-700 bg-green-50">-</span>
+                    <button id="top-home-btn" type="button" class="text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1.5 rounded-lg transition">返回首页</button>
+                    <button id="top-logout-btn" type="button" class="text-sm bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg transition">退出登录</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-5 mb-6 card-hover">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                <i class="fa fa-upload text-blue-600 mr-2"></i>上传文件
+            </h2>
+            <div class="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                <input id="upload-file-input" type="file" multiple class="hidden" />
+                <button id="pick-file-btn" type="button" class="text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg transition whitespace-nowrap">
+                    <i class="fa fa-folder-open mr-1"></i>选择文件
+                </button>
+                <span id="selected-file-text" class="text-sm text-gray-500 flex-1 truncate">未选择文件</span>
+                <label class="text-sm text-gray-700 inline-flex items-center gap-2 whitespace-nowrap">
+                    <input id="upload-public-type" type="checkbox" class="rounded border-gray-300" />
+                    公开文件
+                </label>
+                <button id="upload-btn" type="button" class="text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition whitespace-nowrap">
+                    <i class="fa fa-cloud-upload mr-1"></i>上传
+                </button>
+            </div>
+            <p id="upload-message" class="text-sm text-gray-500 mt-3">请选择文件后上传</p>
+            <div id="upload-progress-list" class="mt-3 space-y-2 hidden"></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-5 mb-6 card-hover">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-800 flex items-center">
+                    <i class="fa fa-lock text-amber-600 mr-2"></i>私有文件
+                </h2>
+                <div class="flex items-center gap-2">
+                    <span id="private-message" class="text-sm text-gray-500"></span>
+                    <button id="private-refresh-btn" type="button" class="text-sm bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg transition">
+                        <i class="fa fa-refresh mr-1"></i>刷新
+                    </button>
+                </div>
+            </div>
+            <div id="private-file-list" class="space-y-3"></div>
+            <div class="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                <label for="page-size-private-files" class="text-gray-600">每页显示</label>
+                <select id="page-size-private-files" class="border border-gray-300 rounded px-2 py-1">
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                </select>
+                <span id="page-info-private-files" class="text-gray-500">第 1 / 1 页</span>
+                <button id="prev-private-files-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">上一页</button>
+                <button id="next-private-files-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">下一页</button>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-5 card-hover">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold text-gray-800 flex items-center">
+                    <i class="fa fa-globe text-green-600 mr-2"></i>公共文件
+                </h2>
+                <div class="flex items-center gap-2">
+                    <span id="public-message" class="text-sm text-gray-500"></span>
+                    <button id="public-refresh-btn" type="button" class="text-sm bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition">
+                        <i class="fa fa-refresh mr-1"></i>刷新
+                    </button>
+                </div>
+            </div>
+            <div id="public-file-list" class="space-y-3"></div>
+            <div class="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                <label for="page-size-public-files" class="text-gray-600">每页显示</label>
+                <select id="page-size-public-files" class="border border-gray-300 rounded px-2 py-1">
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                </select>
+                <span id="page-info-public-files" class="text-gray-500">第 1 / 1 页</span>
+                <button id="prev-public-files-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">上一页</button>
+                <button id="next-public-files-btn" type="button" class="px-2 py-1 border rounded text-gray-700 hover:bg-gray-100">下一页</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_ENDPOINTS = {
+            upload: '/api/file/upload',
+            privateRefresh: '/api/file/refresh',
+            publicRefresh: '/api/file/public/refresh',
+            toPrivate: '/api/file/toprivate',
+            toPublic: '/api/file/topublic',
+            download: '/api/file/download',
+            delete: '/api/file/delete',
+            publicDownload: '/api/file/public/download',
+            publicDelete: '/api/file/public/delete',
+            stream: '/api/file/stream',
+            cover: '/api/file/cover'
+        };
+
+        const topUsername = document.getElementById('top-username');
+        const topHomeBtn = document.getElementById('top-home-btn');
+        const topLogoutBtn = document.getElementById('top-logout-btn');
+        const uploadInput = document.getElementById('upload-file-input');
+        const pickFileBtn = document.getElementById('pick-file-btn');
+        const selectedFileText = document.getElementById('selected-file-text');
+        const uploadPublicType = document.getElementById('upload-public-type');
+        const uploadBtn = document.getElementById('upload-btn');
+        const uploadMessage = document.getElementById('upload-message');
+        const uploadProgressList = document.getElementById('upload-progress-list');
+        const privateRefreshBtn = document.getElementById('private-refresh-btn');
+        const publicRefreshBtn = document.getElementById('public-refresh-btn');
+        const privateMessage = document.getElementById('private-message');
+        const publicMessage = document.getElementById('public-message');
+        const privateFileList = document.getElementById('private-file-list');
+        const publicFileList = document.getElementById('public-file-list');
+        const pageSizePrivateFiles = document.getElementById('page-size-private-files');
+        const pageInfoPrivateFiles = document.getElementById('page-info-private-files');
+        const prevPrivateFilesBtn = document.getElementById('prev-private-files-btn');
+        const nextPrivateFilesBtn = document.getElementById('next-private-files-btn');
+        const pageSizePublicFiles = document.getElementById('page-size-public-files');
+        const pageInfoPublicFiles = document.getElementById('page-info-public-files');
+        const prevPublicFilesBtn = document.getElementById('prev-public-files-btn');
+        const nextPublicFilesBtn = document.getElementById('next-public-files-btn');
+
+        const pagerState = {
+            private: { items: [], page: 1, pageSize: Number(pageSizePrivateFiles.value) || 5 },
+            public: { items: [], page: 1, pageSize: Number(pageSizePublicFiles.value) || 5 }
+        };
+
+        document.addEventListener('copy', (e) => e.preventDefault());
+        document.addEventListener('cut', (e) => e.preventDefault());
+        document.addEventListener('selectstart', (e) => e.preventDefault());
+        document.addEventListener('keydown', (e) => {
+            const key = String(e.key || '').toLowerCase();
+            if ((e.ctrlKey || e.metaKey) && (key === 'c' || key === 'x' || key === 'insert')) {
+                e.preventDefault();
+            }
+        });
+
+        function getToken() {
+            return localStorage.getItem('authToken') || '';
+        }
+
+        function getUsername() {
+            return localStorage.getItem('authUsername') || '';
+        }
+
+        (function initTopBarAuth() {
+            const token = getToken();
+            const username = getUsername();
+            if (!token) {
+                window.location.href = '/login';
+                return;
+            }
+            document.cookie = `authToken=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
+            topUsername.textContent = username || '-';
+        })();
+
+        topHomeBtn.addEventListener('click', () => {
+            window.location.href = '/';
+        });
+
+        topLogoutBtn.addEventListener('click', async () => {
+            const token = getToken();
+            if (token) {
+                try {
+                    await fetch('/api/logout', {
+                        method: 'POST',
+                        headers: { 'X-Token': token },
+                        credentials: 'same-origin'
+                    });
+                } catch (_) {}
+            }
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('authUsername');
+            document.cookie = 'authToken=; path=/; Max-Age=0; SameSite=Lax';
+            window.location.href = '/login';
+        });
+
+        function setButtonLoading(button, isLoading, loadingText) {
+            if (isLoading) {
+                button.dataset.originalHtml = button.innerHTML;
+                button.disabled = true;
+                button.classList.add('opacity-60', 'cursor-not-allowed');
+                button.textContent = loadingText;
+                return;
+            }
+            button.disabled = false;
+            button.classList.remove('opacity-60', 'cursor-not-allowed');
+            if (button.dataset.originalHtml) {
+                button.innerHTML = button.dataset.originalHtml;
+                delete button.dataset.originalHtml;
+            }
+        }
+
+        function setDownloadProgress(item, visible, percent, text, isError) {
+            if (!item) return;
+            const wrap = item.querySelector('[data-role="download-progress-wrap"]');
+            const bar = item.querySelector('[data-role="download-progress-bar"]');
+            const status = item.querySelector('[data-role="download-progress-text"]');
+            if (!wrap || !bar || !status) return;
+
+            if (!visible) {
+                wrap.classList.add('hidden');
+                bar.style.width = '0%';
+                status.textContent = '0%';
+                status.classList.remove('text-red-600', 'text-green-600');
+                status.classList.add('text-gray-500');
+                bar.classList.remove('bg-red-600');
+                bar.classList.add('bg-green-600');
+                return;
+            }
+
+            wrap.classList.remove('hidden');
+            const p = Math.max(0, Math.min(100, Number(percent) || 0));
+            bar.style.width = `${p.toFixed(1)}%`;
+            status.textContent = text || `${p.toFixed(1)}%`;
+            status.classList.remove('text-gray-500', 'text-red-600', 'text-green-600');
+            if (isError) {
+                status.classList.add('text-red-600');
+                bar.classList.remove('bg-green-600');
+                bar.classList.add('bg-red-600');
+                return;
+            }
+            if (p >= 100) {
+                status.classList.add('text-green-600');
+                bar.classList.remove('bg-red-600');
+                bar.classList.add('bg-green-600');
+                return;
+            }
+            status.classList.add('text-gray-500');
+            bar.classList.remove('bg-red-600');
+            bar.classList.add('bg-green-600');
+        }
+
+        function setMessage(target, type, text) {
+            target.classList.remove('text-gray-500', 'text-red-600', 'text-green-600');
+            if (type === 'error') target.classList.add('text-red-600');
+            else if (type === 'success') target.classList.add('text-green-600');
+            else target.classList.add('text-gray-500');
+            target.textContent = text || '';
+        }
+
+        function formatFileSize(sizeInBytes) {
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let size = Number(sizeInBytes) || 0;
+            let unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex += 1;
+            }
+            return unitIndex === 0 ? `${Math.floor(size)} ${units[unitIndex]}` : `${size.toFixed(1)} ${units[unitIndex]}`;
+        }
+
+        function formatAudioTime(seconds) {
+            const value = Number(seconds);
+            if (!Number.isFinite(value) || value < 0) return '00:00';
+            const total = Math.floor(value);
+            const mins = Math.floor(total / 60);
+            const secs = total % 60;
+            return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
+        function syncAudioPlayerUi(item) {
+            if (!item) return;
+            const audio = item.querySelector('[data-role="audio-player"]');
+            const toggleBtn = item.querySelector('[data-role="audio-toggle"]');
+            const progress = item.querySelector('[data-role="audio-progress"]');
+            const currentTimeText = item.querySelector('[data-role="audio-current"]');
+            const totalTimeText = item.querySelector('[data-role="audio-total"]');
+            const coverImage = item.querySelector('[data-role="cover"]');
+            if (!audio || !toggleBtn || !progress || !currentTimeText || !totalTimeText) return;
+
+            const duration = Number(audio.duration);
+            const current = Number(audio.currentTime) || 0;
+            const percent = Number.isFinite(duration) && duration > 0 ? (current / duration) * 1000 : 0;
+
+            progress.value = String(Math.max(0, Math.min(1000, Math.floor(percent))));
+            currentTimeText.textContent = formatAudioTime(current);
+            totalTimeText.textContent = formatAudioTime(Number.isFinite(duration) && duration > 0 ? duration : 0);
+
+            if (audio.paused) {
+                toggleBtn.innerHTML = '<i class="fa fa-play"></i>';
+                if (coverImage) coverImage.classList.remove('cover-rotating');
+            } else {
+                toggleBtn.innerHTML = '<i class="fa fa-pause"></i>';
+                if (coverImage) coverImage.classList.add('cover-rotating');
+            }
+        }
+
+        function decodeMaybeBase64(text) {
+            if (!text) return '';
+            let raw = String(text);
+            if (raw.startsWith('b64:')) raw = raw.slice(4);
+            try {
+                const binary = atob(raw);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i += 1) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+                return new TextDecoder('utf-8').decode(bytes);
+            } catch (_) {
+                return raw;
+            }
+        }
+
+        function decodeUtf8FromLatin1(text) {
+            if (!text) return '';
+            const bytes = new Uint8Array(text.length);
+            for (let i = 0; i < text.length; i += 1) {
+                bytes[i] = text.charCodeAt(i) & 0xFF;
+            }
+            return new TextDecoder('utf-8').decode(bytes);
+        }
+
+        function getDownloadFilename(disposition, fallbackName) {
+            const header = String(disposition || '');
+            const starMatch = header.match(/filename\*=UTF-8''([^;]+)/i);
+            if (starMatch && starMatch[1]) {
+                try {
+                    return decodeURIComponent(starMatch[1]);
+                } catch (_) {
+                    return starMatch[1];
+                }
+            }
+
+            const normalMatch = header.match(/filename="?([^";]+)"?/i);
+            if (normalMatch && normalMatch[1]) {
+                const value = normalMatch[1];
+                try {
+                    return decodeUtf8FromLatin1(value);
+                } catch (_) {
+                    return value;
+                }
+            }
+
+            return fallbackName || 'download.bin';
+        }
+
+        function inferFileIconClass(mimeType, fileName) {
+            const mime = String(mimeType || '').toLowerCase();
+            const ext = String(fileName || '').split('.').pop().toLowerCase();
+            if (mime.startsWith('audio/') || ['mp3', 'wav', 'flac', 'ogg', 'aac', 'm4a'].includes(ext)) return 'fa-file-audio-o text-purple-600';
+            if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg'].includes(ext)) return 'fa-file-image-o text-pink-600';
+            if (mime.startsWith('video/') || ['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) return 'fa-file-video-o text-indigo-600';
+            if (mime.includes('pdf') || ext === 'pdf') return 'fa-file-pdf-o text-red-600';
+            if (mime.includes('word') || ['doc', 'docx'].includes(ext)) return 'fa-file-word-o text-blue-600';
+            if (mime.includes('excel') || ['xls', 'xlsx', 'csv'].includes(ext)) return 'fa-file-excel-o text-green-600';
+            if (mime.includes('zip') || ['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'fa-file-archive-o text-yellow-600';
+            if (mime.startsWith('text/') || ['txt', 'md', 'json', 'xml', 'cpp', 'h', 'js', 'html', 'css'].includes(ext)) return 'fa-file-text-o text-gray-600';
+            return 'fa-file-o text-gray-500';
+        }
+
+        function isAudioFile(fileName, mimeType) {
+            const mime = String(mimeType || '').toLowerCase();
+            if (mime.startsWith('audio/')) return true;
+            const ext = String(fileName || '').split('.').pop().toLowerCase();
+            return ['mp3', 'wav', 'flac', 'ogg', 'aac', 'm4a'].includes(ext);
+        }
+
+        function normalizePrivateFiles(result) {
+            if (result && Array.isArray(result.files)) return result.files;
+            if (result && Array.isArray(result.data)) return result.data;
+            return [];
+        }
+
+        function normalizePublicFiles(result) {
+            if (result && Array.isArray(result.files)) return result.files;
+            if (result && Array.isArray(result.data)) return result.data;
+            return [];
+        }
+
+        async function postJson(url, payload) {
+            const token = getToken();
+            if (!token) {
+                window.location.href = '/login';
+                throw new Error('未登录或登录已过期');
+            }
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Token': token
+                },
+                body: JSON.stringify(payload || {}),
+                credentials: 'same-origin',
+                cache: 'no-cache'
+            });
+            let result = null;
+            try {
+                result = await response.json();
+            } catch (_) {
+                result = null;
+            }
+            if (response.status === 401) {
+                localStorage.removeItem('authToken');
+                window.location.href = '/login';
+                throw new Error((result && result.message) || '登录已失效');
+            }
+            if (!response.ok) throw new Error((result && result.message) || '服务器请求失败');
+            if (result && result.success === false) throw new Error(result.message || '服务器返回失败');
+            return result || {};
+        }
+
+        function createFileItem(file, isPublic) {
+            const userFileId = String(file.user_file_id || file.id || '');
+            const fileHash = String(file.file_hash || file.hash || '');
+            const ownName = decodeMaybeBase64(file.file_name || file.own_name || file.name || file.file_raw_name || fileHash || '(未知文件名)');
+            const uploadedTime = String(file.uploaded_time || file.uploaded_at || file.created_at || '-');
+            const fileSize = formatFileSize(file.file_size || file.size || 0);
+            const uploader = String(file.user_id || file.username || '').trim();
+            const currentUser = String(getUsername() || '').trim();
+            const mimeType = String(file.mime_type || '');
+            const audio = isAudioFile(ownName, mimeType);
+
+            const item = document.createElement('div');
+            item.className = 'bg-gray-50 border border-gray-200 rounded-lg p-4 card-hover';
+            item.dataset.userFileId = userFileId;
+            item.dataset.fileHash = fileHash;
+            item.dataset.fileName = ownName;
+            item.dataset.scope = isPublic ? 'public' : 'private';
+
+            const row = document.createElement('div');
+            row.className = 'flex flex-col sm:flex-row sm:items-center justify-between gap-3';
+
+            const left = document.createElement('div');
+            left.className = 'flex items-start gap-3 min-w-0';
+
+          const iconWrap = document.createElement('button');
+            iconWrap.type = 'button';
+            iconWrap.className = audio
+                ? 'w-10 h-10 rounded-full border border-gray-300 overflow-hidden bg-gray-100 shrink-0'
+                : 'w-10 h-10 rounded-full border border-gray-300 bg-white shrink-0 flex items-center justify-center';
+            iconWrap.title = audio ? '展开/收起播放器' : '文件类型';
+            if (audio) {
+                iconWrap.dataset.action = 'toggle-player';
+                const coverImage = document.createElement('img');
+                coverImage.className = 'w-full h-full object-cover';
+                coverImage.alt = 'cover';
+                coverImage.dataset.role = 'cover';
+                coverImage.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"%3E%3Ccircle cx="32" cy="32" r="32" fill="%23e5e7eb"/%3E%3Cpath d="M24 22v20.5A4.5 4.5 0 1 0 27 47V30h13v10.5A4.5 4.5 0 1 0 43 45V22H24z" fill="%239ca3af"/%3E%3C/svg%3E';
+                iconWrap.appendChild(coverImage);
+            } else {
+                const icon = document.createElement('i');
+                icon.className = `fa ${inferFileIconClass(mimeType, ownName)}`;
+                iconWrap.appendChild(icon);
+            }
+
+            const info = document.createElement('div');
+            info.className = 'min-w-0';
+
+            const nameLine = document.createElement('div');
+            nameLine.className = 'text-sm text-gray-800 file-name flex items-center flex-wrap gap-2';
+
+            if (uploader) {
+                const uploaderTag = document.createElement('span');
+                uploaderTag.className = 'inline-block px-2 py-0.5 text-xs rounded border border-green-500 text-green-700 bg-green-50';
+                uploaderTag.textContent = uploader;
+                nameLine.appendChild(uploaderTag);
+            }
+
+            const nameText = document.createElement('span');
+            nameText.textContent = ownName || '(未知文件名)';
+            nameLine.appendChild(nameText);
+
+            const metaLine = document.createElement('div');
+            metaLine.className = 'text-xs text-gray-500 mt-1';
+            metaLine.textContent = `大小: ${fileSize} · 上传时间: ${uploadedTime}`;
+
+            info.appendChild(nameLine);
+            info.appendChild(metaLine);
+
+            const right = document.createElement('div');
+            right.className = 'flex items-center gap-3';
+
+            const downloadBtn = document.createElement('button');
+            downloadBtn.type = 'button';
+            downloadBtn.className = 'text-green-600 hover:text-green-700 text-sm';
+            downloadBtn.innerHTML = '<i class="fa fa-download mr-1"></i>下载';
+            downloadBtn.dataset.action = isPublic ? 'public-download' : 'download';
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'text-red-500 hover:text-red-600 text-sm';
+            deleteBtn.innerHTML = '<i class="fa fa-trash mr-1"></i>删除';
+            deleteBtn.dataset.action = isPublic ? 'public-delete' : 'delete';
+
+            const canChangeVisibility = isPublic ? (uploader && currentUser && uploader === currentUser) : true;
+            if (canChangeVisibility) {
+                const changeTypeBtn = document.createElement('button');
+                changeTypeBtn.type = 'button';
+                changeTypeBtn.className = 'text-amber-600 hover:text-amber-700 text-sm';
+                changeTypeBtn.innerHTML = isPublic
+                    ? '<i class="fa fa-lock mr-1"></i>转私有'
+                    : '<i class="fa fa-globe mr-1"></i>转公共';
+                changeTypeBtn.dataset.action = isPublic ? 'to-private' : 'to-public';
+                right.appendChild(changeTypeBtn);
+            }
+
+            right.appendChild(downloadBtn);
+            right.appendChild(deleteBtn);
+
+            left.appendChild(iconWrap);
+            left.appendChild(info);
+            row.appendChild(left);
+            row.appendChild(right);
+            item.appendChild(row);
+
+            if (audio) {
+                const playerWrap = document.createElement('div');
+                playerWrap.className = 'hidden mt-3';
+                playerWrap.dataset.role = 'player-wrap';
+
+                const audioPlayer = document.createElement('audio');
+                audioPlayer.controls = false;
+                audioPlayer.preload = 'none';
+                audioPlayer.className = 'w-full';
+                audioPlayer.dataset.role = 'audio-player';
+                const query = isPublic
+                    ? `scope=public&file_hash=${encodeURIComponent(fileHash)}`
+                    : `scope=private&user_file_id=${encodeURIComponent(userFileId)}`;
+                audioPlayer.dataset.streamUrl = `${API_ENDPOINTS.stream}?${query}`;
+                playerWrap.appendChild(audioPlayer);
+
+                const playerControls = document.createElement('div');
+                playerControls.className = 'mt-2';
+
+                const controlsTop = document.createElement('div');
+                controlsTop.className = 'flex items-center justify-center gap-2 text-xs mb-1';
+
+                const currentTimeText = document.createElement('span');
+                currentTimeText.className = 'text-xs text-gray-600';
+                currentTimeText.dataset.role = 'audio-current';
+                currentTimeText.textContent = '00:00';
+
+                const dividerText = document.createElement('span');
+                dividerText.className = 'text-xs text-gray-400';
+                dividerText.textContent = '/';
+
+                const totalTimeText = document.createElement('span');
+                totalTimeText.className = 'text-xs text-gray-600';
+                totalTimeText.dataset.role = 'audio-total';
+                totalTimeText.textContent = '00:00';
+
+                controlsTop.appendChild(currentTimeText);
+                controlsTop.appendChild(dividerText);
+                controlsTop.appendChild(totalTimeText);
+
+                const audioProgress = document.createElement('input');
+                audioProgress.type = 'range';
+                audioProgress.min = '0';
+                audioProgress.max = '1000';
+                audioProgress.step = '1';
+                audioProgress.value = '0';
+                audioProgress.className = 'w-full';
+                audioProgress.dataset.role = 'audio-progress';
+
+                const audioToggleBtn = document.createElement('button');
+                audioToggleBtn.type = 'button';
+                audioToggleBtn.className = 'w-12 h-12 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 flex items-center justify-center mx-auto';
+                audioToggleBtn.dataset.role = 'audio-toggle';
+                audioToggleBtn.innerHTML = '<i class="fa fa-play"></i>';
+
+                audioToggleBtn.addEventListener('click', async () => {
+                    if (!audioPlayer.src) return;
+                    if (audioPlayer.paused) {
+                        try {
+                            await audioPlayer.play();
+                        } catch (_) {}
+                    } else {
+                        audioPlayer.pause();
+                    }
+                    syncAudioPlayerUi(item);
+                });
+
+                audioProgress.addEventListener('input', () => {
+                    const duration = Number(audioPlayer.duration);
+                    if (!Number.isFinite(duration) || duration <= 0) return;
+                    const percent = Number(audioProgress.value) / 1000;
+                    audioPlayer.currentTime = Math.max(0, Math.min(duration, duration * percent));
+                    syncAudioPlayerUi(item);
+                });
+
+                audioPlayer.addEventListener('loadedmetadata', () => syncAudioPlayerUi(item));
+                audioPlayer.addEventListener('timeupdate', () => syncAudioPlayerUi(item));
+                audioPlayer.addEventListener('play', () => syncAudioPlayerUi(item));
+                audioPlayer.addEventListener('pause', () => syncAudioPlayerUi(item));
+                audioPlayer.addEventListener('ended', () => syncAudioPlayerUi(item));
+
+                playerControls.appendChild(controlsTop);
+                playerControls.appendChild(audioProgress);
+                playerControls.appendChild(audioToggleBtn);
+                playerWrap.appendChild(playerControls);
+                item.appendChild(playerWrap);
+            }
+
+            const downloadProgressWrap = document.createElement('div');
+            downloadProgressWrap.className = 'hidden mt-3';
+            downloadProgressWrap.dataset.role = 'download-progress-wrap';
+
+            const downloadProgressTrack = document.createElement('div');
+            downloadProgressTrack.className = 'w-full h-2 bg-gray-200 rounded overflow-hidden';
+
+            const downloadProgressBar = document.createElement('div');
+            downloadProgressBar.className = 'h-full bg-green-600 transition-all';
+            downloadProgressBar.style.width = '0%';
+            downloadProgressBar.dataset.role = 'download-progress-bar';
+
+            const downloadProgressText = document.createElement('p');
+            downloadProgressText.className = 'text-xs text-gray-500 mt-1';
+            downloadProgressText.dataset.role = 'download-progress-text';
+            downloadProgressText.textContent = '0%';
+
+            downloadProgressTrack.appendChild(downloadProgressBar);
+            downloadProgressWrap.appendChild(downloadProgressTrack);
+            downloadProgressWrap.appendChild(downloadProgressText);
+            item.appendChild(downloadProgressWrap);
+
+            return item;
+        }
+
+        async function loadFileCover(item) {
+            if (!item) return;
+            const imageElement = item.querySelector('[data-role="cover"]');
+            if (!imageElement) return;
+
+            const scope = item.dataset.scope || 'private';
+            const userFileId = item.dataset.userFileId || '';
+            const fileHash = item.dataset.fileHash || '';
+
+            try {
+                const result = await postJson(API_ENDPOINTS.cover, {
+                    scope,
+                    user_file_id: userFileId,
+                    file_hash: fileHash
+                });
+                const data = result && result.data ? result.data : {};
+                if (typeof data.image === 'string' && data.image.length > 0) {
+                    imageElement.src = data.image;
+                }
+            } catch (_) {
+                // keep placeholder cover when no embedded picture exists
+            }
+        }
+
+        function renderPrivateList(files) {
+            pagerState.private.items = Array.isArray(files) ? files : [];
+            const totalPages = Math.max(1, Math.ceil(pagerState.private.items.length / pagerState.private.pageSize));
+            if (pagerState.private.page > totalPages) {
+                pagerState.private.page = totalPages;
+            }
+            const start = (pagerState.private.page - 1) * pagerState.private.pageSize;
+            const currentItems = pagerState.private.items.slice(start, start + pagerState.private.pageSize);
+
+            privateFileList.innerHTML = '';
+            if (pagerState.private.items.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'text-sm text-gray-500';
+                empty.textContent = '暂无私有文件';
+                privateFileList.appendChild(empty);
+            } else {
+                currentItems.forEach(file => {
+                    const item = createFileItem(file, false);
+                    privateFileList.appendChild(item);
+                    loadFileCover(item);
+                });
+            }
+
+            pageInfoPrivateFiles.textContent = `第 ${pagerState.private.page} / ${totalPages} 页`;
+            prevPrivateFilesBtn.disabled = pagerState.private.page <= 1;
+            nextPrivateFilesBtn.disabled = pagerState.private.page >= totalPages;
+        }
+
+        function renderPublicList(files) {
+            pagerState.public.items = Array.isArray(files) ? files : [];
+            const totalPages = Math.max(1, Math.ceil(pagerState.public.items.length / pagerState.public.pageSize));
+            if (pagerState.public.page > totalPages) {
+                pagerState.public.page = totalPages;
+            }
+            const start = (pagerState.public.page - 1) * pagerState.public.pageSize;
+            const currentItems = pagerState.public.items.slice(start, start + pagerState.public.pageSize);
+
+            publicFileList.innerHTML = '';
+            if (pagerState.public.items.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'text-sm text-gray-500';
+                empty.textContent = '暂无公共文件';
+                publicFileList.appendChild(empty);
+            } else {
+                currentItems.forEach(file => {
+                    const item = createFileItem(file, true);
+                    publicFileList.appendChild(item);
+                    loadFileCover(item);
+                });
+            }
+
+            pageInfoPublicFiles.textContent = `第 ${pagerState.public.page} / ${totalPages} 页`;
+            prevPublicFilesBtn.disabled = pagerState.public.page <= 1;
+            nextPublicFilesBtn.disabled = pagerState.public.page >= totalPages;
+        }
+
+        async function refreshPrivateFiles() {
+            setButtonLoading(privateRefreshBtn, true, '刷新中...');
+            try {
+                const result = await postJson(API_ENDPOINTS.privateRefresh, { refresh: true });
+                renderPrivateList(normalizePrivateFiles(result));
+                setMessage(privateMessage, 'success', '刷新成功');
+            } catch (error) {
+                setMessage(privateMessage, 'error', error.message || '刷新失败');
+            } finally {
+                setButtonLoading(privateRefreshBtn, false, '刷新中...');
+            }
+        }
+
+        async function refreshPublicFiles() {
+            setButtonLoading(publicRefreshBtn, true, '刷新中...');
+            try {
+                const result = await postJson(API_ENDPOINTS.publicRefresh, { refresh: true });
+                renderPublicList(normalizePublicFiles(result));
+                setMessage(publicMessage, 'success', '刷新成功');
+            } catch (error) {
+                setMessage(publicMessage, 'error', error.message || '刷新失败');
+            } finally {
+                setButtonLoading(publicRefreshBtn, false, '刷新中...');
+            }
+        }
+
+        function createUploadProgressItem(fileName) {
+            const item = document.createElement('div');
+            item.className = 'bg-gray-50 border border-gray-200 rounded-lg p-2';
+
+            const topRow = document.createElement('div');
+            topRow.className = 'flex items-center justify-between gap-2 text-xs';
+
+            const name = document.createElement('span');
+            name.className = 'text-gray-700 truncate';
+            name.textContent = fileName || '(未知文件名)';
+
+            const status = document.createElement('span');
+            status.className = 'text-gray-500 shrink-0';
+            status.textContent = '等待上传';
+
+            topRow.appendChild(name);
+            topRow.appendChild(status);
+
+            const track = document.createElement('div');
+            track.className = 'w-full h-2 bg-gray-200 rounded mt-1 overflow-hidden';
+
+            const bar = document.createElement('div');
+            bar.className = 'h-full bg-blue-600 transition-all';
+            bar.style.width = '0%';
+
+            track.appendChild(bar);
+            item.appendChild(topRow);
+            item.appendChild(track);
+
+            uploadProgressList.appendChild(item);
+            return { item, status, bar };
+        }
+
+        function updateUploadProgressItem(progressItem, percent, statusText, isError) {
+            if (!progressItem) return;
+            const value = Math.max(0, Math.min(100, Number(percent) || 0));
+            progressItem.bar.style.width = `${value.toFixed(1)}%`;
+            progressItem.status.textContent = statusText || `${value.toFixed(1)}%`;
+            progressItem.status.classList.remove('text-gray-500', 'text-green-600', 'text-red-600');
+            if (isError) {
+                progressItem.status.classList.add('text-red-600');
+                progressItem.bar.classList.remove('bg-blue-600', 'bg-green-600');
+                progressItem.bar.classList.add('bg-red-600');
+                return;
+            }
+            if (value >= 100) {
+                progressItem.status.classList.add('text-green-600');
+                progressItem.bar.classList.remove('bg-blue-600', 'bg-red-600');
+                progressItem.bar.classList.add('bg-green-600');
+                return;
+            }
+            progressItem.status.classList.add('text-gray-500');
+            progressItem.bar.classList.remove('bg-green-600', 'bg-red-600');
+            progressItem.bar.classList.add('bg-blue-600');
+        }
+
+        function uploadSingleFileWithProgress(file, isPublic, onProgress) {
+            return new Promise((resolve, reject) => {
+                const token = getToken();
+                if (!token) {
+                    window.location.href = '/login';
+                    reject(new Error('未登录或登录已过期'));
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', API_ENDPOINTS.upload, true);
+                xhr.withCredentials = true;
+                xhr.setRequestHeader('X-Token', token);
+                xhr.setRequestHeader('X-File-PublicType', isPublic ? 'true' : 'false');
+
+                xhr.upload.onprogress = (event) => {
+                    if (!event.lengthComputable || typeof onProgress !== 'function') return;
+                    onProgress(event.loaded, event.total);
+                };
+
+                xhr.onload = () => {
+                    let result = null;
+                    try {
+                        result = JSON.parse(xhr.responseText || '{}');
+                    } catch (_) {
+                        result = null;
+                    }
+                    if (xhr.status === 401) {
+                        localStorage.removeItem('authToken');
+                        window.location.href = '/login';
+                        reject(new Error((result && result.message) || '登录已失效'));
+                        return;
+                    }
+                    if (xhr.status < 200 || xhr.status >= 300) {
+                        reject(new Error((result && result.message) || `上传失败: ${file.name}`));
+                        return;
+                    }
+                    if (result && result.success === false) {
+                        reject(new Error(result.message || `上传失败: ${file.name}`));
+                        return;
+                    }
+                    resolve(result || {});
+                };
+
+                xhr.onerror = () => reject(new Error(`上传失败: ${file.name}`));
+                xhr.send(formData);
+            });
+        }
+
+        async function uploadFiles() {
+            const files = Array.from(uploadInput.files || []);
+            if (files.length === 0) {
+                setMessage(uploadMessage, 'error', '请先选择文件');
+                return;
+            }
+
+            const isPublic = uploadPublicType.checked;
+            setButtonLoading(uploadBtn, true, '上传中...');
+            uploadProgressList.innerHTML = '';
+            uploadProgressList.classList.remove('hidden');
+
+            let hasError = false;
+            try {
+                for (const file of files) {
+                    const progressItem = createUploadProgressItem(file.name);
+                    updateUploadProgressItem(progressItem, 0, '上传中 0.0%', false);
+
+                    try {
+                        await uploadSingleFileWithProgress(file, isPublic, (loaded, total) => {
+                            const percent = total > 0 ? (loaded / total) * 100 : 0;
+                            updateUploadProgressItem(progressItem, percent, `上传中 ${percent.toFixed(1)}%`, false);
+                        });
+                        updateUploadProgressItem(progressItem, 100, '上传完成', false);
+                    } catch (error) {
+                        hasError = true;
+                        updateUploadProgressItem(progressItem, 100, error.message || '上传失败', true);
+                    }
+                }
+
+                uploadInput.value = '';
+                selectedFileText.textContent = '未选择文件';
+                if (hasError) {
+                    setMessage(uploadMessage, 'error', '部分文件上传失败');
+                } else {
+                    setMessage(uploadMessage, 'success', '上传成功');
+                }
+                await Promise.allSettled([refreshPrivateFiles(), refreshPublicFiles()]);
+            } finally {
+                setButtonLoading(uploadBtn, false, '上传中...');
+            }
+        }
+
+        async function deletePrivateFile(userFileId) {
+            const result = await postJson(API_ENDPOINTS.delete, { user_file_id: userFileId });
+            return result;
+        }
+
+        async function deletePublicFile(fileHash) {
+            const result = await postJson(API_ENDPOINTS.publicDelete, { file_hash: fileHash });
+            return result;
+        }
+
+        async function convertFileScope(apiUrl, fileHash) {
+            const result = await postJson(apiUrl, { file_hash: fileHash });
+            return result;
+        }
+
+        async function downloadByApi(apiUrl, payload, fallbackName, item) {
+            const token = getToken();
+            if (!token) {
+                window.location.href = '/login';
+                throw new Error('未登录或登录已过期');
+            }
+
+            setDownloadProgress(item, true, 0, '下载中 0.0%', false);
+            try {
+                const downloadResult = await new Promise((resolve, reject) => {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('POST', apiUrl, true);
+                    xhr.withCredentials = true;
+                    xhr.responseType = 'blob';
+                    xhr.setRequestHeader('Content-Type', 'application/json');
+                    xhr.setRequestHeader('X-Token', token);
+
+                    xhr.onprogress = (event) => {
+                        if (!event.lengthComputable) {
+                            setDownloadProgress(item, true, 0, '下载中...', false);
+                            return;
+                        }
+                        const percent = (event.loaded / event.total) * 100;
+                        setDownloadProgress(item, true, percent, `下载中 ${percent.toFixed(1)}%`, false);
+                    };
+
+                    xhr.onload = () => {
+                        if (xhr.status === 401) {
+                            localStorage.removeItem('authToken');
+                            window.location.href = '/login';
+                            reject(new Error('登录已失效'));
+                            return;
+                        }
+                        if (xhr.status < 200 || xhr.status >= 300) {
+                            reject(new Error('下载失败'));
+                            return;
+                        }
+                        resolve({
+                            blob: xhr.response,
+                            disposition: xhr.getResponseHeader('content-disposition') || ''
+                        });
+                    };
+
+                    xhr.onerror = () => reject(new Error('下载失败'));
+                    xhr.send(JSON.stringify(payload || {}));
+                });
+
+                const blob = downloadResult.blob;
+                const filename = getDownloadFilename(downloadResult.disposition, fallbackName);
+                const objectUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = objectUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(objectUrl);
+                setDownloadProgress(item, true, 100, '下载完成', false);
+            } catch (error) {
+                setDownloadProgress(item, true, 100, error.message || '下载失败', true);
+                throw error;
+            } finally {
+                setTimeout(() => setDownloadProgress(item, false, 0, '0%', false), 1200);
+            }
+        }
+
+        async function downloadPrivateFile(userFileId, fallbackName, item) {
+            await downloadByApi(API_ENDPOINTS.download, { user_file_id: userFileId }, fallbackName, item);
+        }
+
+        async function downloadPublicFile(fileHash, fileName, item) {
+            await downloadByApi(API_ENDPOINTS.publicDownload, { file_hash: fileHash, file_name: fileName }, fileName || 'public-file.bin', item);
+        }
+
+        function toggleAudioPlayer(item) {
+            if (!item) return;
+            const playerWrap = item.querySelector('[data-role="player-wrap"]');
+            if (!playerWrap) return;
+            const audio = playerWrap.querySelector('audio');
+            if (!audio) return;
+            const isHidden = playerWrap.classList.contains('hidden');
+            if (isHidden) {
+              if (!audio.src) {
+                    audio.src = `${audio.dataset.streamUrl || ''}&t=${Date.now()}`;
+                }
+                playerWrap.classList.remove('hidden');
+                audio.play().catch(() => {});
+             syncAudioPlayerUi(item);
+                return;
+            }
+            playerWrap.classList.add('hidden');
+            audio.pause();
+           syncAudioPlayerUi(item);
+        }
+
+        function releaseAudioForFile(fileHash) {
+            const hash = String(fileHash || '');
+            if (!hash) return;
+            const items = document.querySelectorAll(`[data-file-hash="${hash}"]`);
+            items.forEach((item) => {
+                const playerWrap = item.querySelector('[data-role="player-wrap"]');
+                const audio = item.querySelector('[data-role="audio-player"]');
+                if (!audio) return;
+                try {
+                    audio.pause();
+                    audio.removeAttribute('src');
+                    audio.load();
+                } catch (_) {}
+                if (playerWrap) playerWrap.classList.add('hidden');
+                syncAudioPlayerUi(item);
+            });
+        }
+
+        privateFileList.addEventListener('click', async (event) => {
+            const btn = event.target.closest('button[data-action]');
+            if (!btn) return;
+            const item = btn.closest('[data-user-file-id]');
+            if (!item) return;
+            const userFileId = String(item.dataset.userFileId || '');
+            if (!userFileId) return;
+
+            if (btn.dataset.action === 'toggle-player') {
+                toggleAudioPlayer(item);
+                return;
+            }
+
+            if (btn.dataset.action === 'delete') {
+                setButtonLoading(btn, true, '删除中...');
+                try {
+                    releaseAudioForFile(item.dataset.fileHash || '');
+                    await new Promise(resolve => setTimeout(resolve, 120));
+                    await deletePrivateFile(userFileId);
+                    setMessage(privateMessage, 'success', '删除成功');
+                    await refreshPrivateFiles();
+                } catch (error) {
+                    setMessage(privateMessage, 'error', error.message || '删除失败');
+                } finally {
+                    setButtonLoading(btn, false, '删除中...');
+                }
+                return;
+            }
+
+            if (btn.dataset.action === 'to-public') {
+                setButtonLoading(btn, true, '切换中...');
+                try {
+                    await convertFileScope(API_ENDPOINTS.toPublic, item.dataset.fileHash || '');
+                    setMessage(privateMessage, 'success', '已转为公共文件');
+                    await Promise.allSettled([refreshPrivateFiles(), refreshPublicFiles()]);
+                } catch (error) {
+                    setMessage(privateMessage, 'error', error.message || '切换失败');
+                } finally {
+                    setButtonLoading(btn, false, '切换中...');
+                }
+                return;
+            }
+
+            if (btn.dataset.action === 'download') {
+                setButtonLoading(btn, true, '下载中...');
+                try {
+                    await downloadPrivateFile(userFileId, item.dataset.fileName || 'download.bin', item);
+                    setMessage(privateMessage, 'success', '下载成功');
+                } catch (error) {
+                    setMessage(privateMessage, 'error', error.message || '下载失败');
+                } finally {
+                    setButtonLoading(btn, false, '下载中...');
+                }
+            }
+        });
+
+        publicFileList.addEventListener('click', async (event) => {
+            const btn = event.target.closest('button[data-action]');
+            if (!btn) return;
+            const item = btn.closest('[data-file-hash]');
+            if (!item) return;
+            const fileHash = String(item.dataset.fileHash || '');
+            const fileName = String(item.dataset.fileName || 'public-file.bin');
+
+            if (btn.dataset.action === 'toggle-player') {
+                toggleAudioPlayer(item);
+                return;
+            }
+
+            if (btn.dataset.action === 'public-download') {
+                setButtonLoading(btn, true, '下载中...');
+                try {
+                    await downloadPublicFile(fileHash, fileName, item);
+                    setMessage(publicMessage, 'success', '下载成功');
+                } catch (error) {
+                    setMessage(publicMessage, 'error', error.message || '下载失败');
+                } finally {
+                    setButtonLoading(btn, false, '下载中...');
+                }
+                return;
+            }
+
+            if (btn.dataset.action === 'public-delete') {
+                setButtonLoading(btn, true, '删除中...');
+                try {
+                    releaseAudioForFile(fileHash);
+                    await new Promise(resolve => setTimeout(resolve, 120));
+                    await deletePublicFile(fileHash);
+                    setMessage(publicMessage, 'success', '删除成功');
+                    await Promise.allSettled([refreshPublicFiles(), refreshPrivateFiles()]);
+                } catch (error) {
+                    setMessage(publicMessage, 'error', error.message || '删除失败');
+                } finally {
+                    setButtonLoading(btn, false, '删除中...');
+                }
+                return;
+            }
+
+            if (btn.dataset.action === 'to-private') {
+                setButtonLoading(btn, true, '切换中...');
+                try {
+                    await convertFileScope(API_ENDPOINTS.toPrivate, fileHash);
+                    setMessage(publicMessage, 'success', '已转为私有文件');
+                    await Promise.allSettled([refreshPublicFiles(), refreshPrivateFiles()]);
+                } catch (error) {
+                    setMessage(publicMessage, 'error', error.message || '切换失败');
+                } finally {
+                    setButtonLoading(btn, false, '切换中...');
+                }
+            }
+        });
+
+        pickFileBtn.addEventListener('click', () => uploadInput.click());
+        uploadInput.addEventListener('change', () => {
+            const files = Array.from(uploadInput.files || []);
+            if (files.length === 0) {
+                selectedFileText.textContent = '未选择文件';
+                return;
+            }
+            if (files.length === 1) {
+                selectedFileText.textContent = files[0].name;
+                return;
+            }
+            selectedFileText.textContent = `已选择 ${files.length} 个文件`;
+        });
+        uploadBtn.addEventListener('click', uploadFiles);
+        privateRefreshBtn.addEventListener('click', refreshPrivateFiles);
+        publicRefreshBtn.addEventListener('click', refreshPublicFiles);
+        pageSizePrivateFiles.addEventListener('change', () => {
+            pagerState.private.pageSize = Number(pageSizePrivateFiles.value) || 5;
+            pagerState.private.page = 1;
+            renderPrivateList(pagerState.private.items);
+        });
+        pageSizePublicFiles.addEventListener('change', () => {
+            pagerState.public.pageSize = Number(pageSizePublicFiles.value) || 5;
+            pagerState.public.page = 1;
+            renderPublicList(pagerState.public.items);
+        });
+        prevPrivateFilesBtn.addEventListener('click', () => {
+            if (pagerState.private.page <= 1) return;
+            pagerState.private.page -= 1;
+            renderPrivateList(pagerState.private.items);
+        });
+        nextPrivateFilesBtn.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil(pagerState.private.items.length / pagerState.private.pageSize));
+            if (pagerState.private.page >= totalPages) return;
+            pagerState.private.page += 1;
+            renderPrivateList(pagerState.private.items);
+        });
+        prevPublicFilesBtn.addEventListener('click', () => {
+            if (pagerState.public.page <= 1) return;
+            pagerState.public.page -= 1;
+            renderPublicList(pagerState.public.items);
+        });
+        nextPublicFilesBtn.addEventListener('click', () => {
+            const totalPages = Math.max(1, Math.ceil(pagerState.public.items.length / pagerState.public.pageSize));
+            if (pagerState.public.page >= totalPages) return;
+            pagerState.public.page += 1;
+            renderPublicList(pagerState.public.items);
+        });
+
+        refreshPrivateFiles();
+        refreshPublicFiles();
+    </script>
+</body>
+</html>

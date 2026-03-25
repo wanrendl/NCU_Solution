@@ -98,7 +98,7 @@ private:
 	std::condition_variable queueCv_;
 	bool stopping_{ false };
 	std::atomic<bool> running_{ false };
- SocketHandle listenSocket_{ kInvalidSocket };
+	SocketHandle listenSocket_{ kInvalidSocket };
 	Logger& logger_;
 };
 
